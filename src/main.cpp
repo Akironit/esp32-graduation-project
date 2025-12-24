@@ -1,11 +1,9 @@
 #include <Arduino.h>
 #include "FujiHeatPump.h"
 
-
 FujiHeatPump hp;
 
-
-// Простейший парсер команд
+// Simple command parser
 void processSerialCommand() {
     if (!Serial.available()) return;
     
@@ -108,12 +106,12 @@ void processSerialCommand() {
     Serial.println("Unknown command. Type 'help'");
 }
 
-
 void setup() {
     Serial.begin(115200);
-    Serial.println("-=-=-=-=- Master: Start -=-=-=-=- ");
+    Serial.println("-=-=-=-=- Controller: Start -=-=-=-=- ");
 
     hp.connect(&Serial2, false, 16, 17);
+    hp.setDebug(true);
     
 }
 
@@ -121,14 +119,9 @@ void loop() {
 
     processSerialCommand();
 
-    if (hp.waitForFrame()) {    // прочитать состояние и подготовить ответ
-    delay(60);                  // отправлять ответ через 50–60ms 
-    hp.sendPendingFrame();      // отправить то, что подготовлено 
-  }
-
-    // hp.waitForFrame();      
-    // hp.sendPendingFrame();    
-  
-
+    if (hp.waitForFrame()) {   
+        delay(60);            
+        hp.sendPendingFrame();
+    }
 
 }

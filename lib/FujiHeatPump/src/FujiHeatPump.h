@@ -69,13 +69,13 @@ typedef struct FujiFrames  {
     byte messageDest = 0;
 } FujiFrame;
 
-class FujiHeatPump
-{
+class FujiHeatPump {
   private:
     HardwareSerial *_serial;
     byte            readBuf[8];
     byte            writeBuf[8];
     
+    //byte            isStarted = false;  // When AC starts, PRIMARY will send 2 data packets: 1 to AC and 1 to SECONDARY
     byte            controllerAddress;  
     bool            controllerIsPrimary = true;  
     bool            seenSecondaryController = false;  
@@ -127,12 +127,15 @@ class FujiHeatPump
 };
 
 enum class FujiMode : byte {
-    UNKNOWN=0,
-    FAN=1,
-    DRY=2,
-    COOL=3,
-    HEAT=4,
-    AUTO=5
+    UNKNOWN = 0,
+    FAN     = 1,
+    DRY     = 2,
+    COOL    = 3,
+    HEAT    = 4,
+    AUTO    = 5
+    // There is also mode=7 when AC starts and MessegeType=2
+    // When the native controller (PRIMARY) receives a frame with mode=7, 
+    // the response from it is addressed to the SECONDARY controller.
 };
 
 enum class FujiMessageType : byte {

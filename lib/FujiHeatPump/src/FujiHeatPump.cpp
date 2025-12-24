@@ -102,7 +102,8 @@ void FujiHeatPump::connect(HardwareSerial *serial, bool secondary, int rxPin=-1,
 
 void FujiHeatPump::printFrame(byte buf[8], FujiFrame ff) {
   Serial.printf("%X %X %X %X %X %X %X %X  ", buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
-  Serial.printf(" mSrc: %d mDst: %d mType: %d write: %d login: %d unknown: %d onOff: %d temp: %d, mode: %d cP:%d uM:%d cTemp:%d acError:%d \n", ff.messageSource, ff.messageDest, ff.messageType, ff.writeBit, ff.loginBit, ff.unknownBit, ff.onOff, ff.temperature, ff.acMode, ff.controllerPresent, ff.updateMagic, ff.controllerTemp, ff.acError);
+  Serial.printf(" mSrc: %d mDst: %d mType: %d write: %d login: %d unknown: %d onOff: %d temp: %d, mode: %d cP:%d uM:%d cTemp:%d acError:%d \n", 
+    ff.messageSource, ff.messageDest, ff.messageType, ff.writeBit, ff.loginBit, ff.unknownBit, ff.onOff, ff.temperature, ff.acMode, ff.controllerPresent, ff.updateMagic, ff.controllerTemp, ff.acError);
 
 }
 
@@ -137,7 +138,7 @@ bool FujiHeatPump::waitForFrame() {
         ff = decodeFrame();
 
         if(debugPrint) {
-            Serial.printf("<-- ");
+            Serial.printf("--> ");
             printFrame(readBuf, ff);
         }
         
@@ -237,24 +238,42 @@ bool FujiHeatPump::waitForFrame() {
 
             }
             else if(ff.messageType == static_cast<byte>(FujiMessageType::LOGIN)){
-                // received a login frame OK frame
-                // the primary will send packet to a secondary controller to see if it exists
                 ff.messageSource     = controllerAddress;
-                // ff.messageDest       = static_cast<byte>(FujiAddress::SECONDARY);
-                ff.messageDest       = static_cast<byte>(FujiAddress::UNIT);
-                ff.loginBit          = true;
-                ff.controllerPresent = 1;
-                ff.updateMagic       = 0;
+                ff.writeBit          = 0;       // change 1 → 0
                 ff.unknownBit        = true;
-                ff.writeBit          = 0;
-                
-                ff.onOff             = currentState.onOff;
-                ff.temperature       = currentState.temperature;
-                ff.acMode            = currentState.acMode;
-                ff.fanMode           = currentState.fanMode;
-                ff.swingMode         = currentState.swingMode;
-                ff.swingStep         = currentState.swingStep;
-                ff.acError           = currentState.acError;
+                ff.updateMagic       = 0;
+
+                if (ff.acMode == 7) {
+                    // received a login frame OK frame
+                    // the primary will send packet to a secondary controller to see if it exists
+                    ff.messageDest       = static_cast<byte>(FujiAddress::SECONDARY);           
+                    ff.messageType       = static_cast<byte>(FujiMessageType::STATUS);  // But MessageType should be = 0
+                    ff.loginBit          = true;
+                    ff.controllerPresent = 1;                    
+                    
+                    ff.onOff             = currentState.onOff;
+                    ff.temperature       = currentState.temperature;
+                    ff.acMode            = currentState.acMode;
+                    ff.fanMode           = currentState.fanMode;
+                    ff.swingMode         = currentState.swingMode;
+                    ff.swingStep         = currentState.swingStep;
+                    ff.acError           = currentState.acError;
+                } else { 
+                    // I'm not sure if this section is needed, since it has never been used in my situation, 
+                    // since the handshake takes place via STATUS, and only acMode==7 works in the LOGIN section.
+                    ff.messageDest       = static_cast<byte>(FujiAddress::UNIT);
+                    ff.messageType       = static_cast<byte>(FujiMessageType::LOGIN);
+                    ff.loginBit          = false;
+                    ff.controllerPresent = 0;   
+
+                    ff.onOff             = 0;
+                    ff.temperature       = 0;
+                    ff.acMode            = 0;
+                    ff.fanMode           = 0;
+                    ff.swingMode         = 0;
+                    ff.swingStep         = 0;
+                    ff.acError           = 0;
+                }
             } else if(ff.messageType == static_cast<byte>(FujiMessageType::ERROR)) {
                 Serial.printf("AC ERROR RECV: ");
                 printFrame(readBuf, ff);
@@ -265,7 +284,7 @@ bool FujiHeatPump::waitForFrame() {
             encodeFrame(ff);
 
             if(debugPrint) {
-                Serial.printf("--> ");
+                Serial.printf("<-- ");
                 printFrame(writeBuf, ff);
             }
 
