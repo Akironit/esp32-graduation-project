@@ -1,3 +1,4 @@
+#pragma once
 #include <HardwareSerial.h>
 #include <Arduino.h>
 
