@@ -2,6 +2,8 @@
 #pragma once
 
 #include <Arduino.h>
+#include "NetworkManager.h"
+#include "Secrets.h"
 #include "FujiHeatPump.h"
 #include "SerialConsole.h"
 #include "VfdController.h"
@@ -34,4 +36,10 @@ private:
     SerialConsole console;
     VfdController vfd{RS485_DERE_PIN};
     TemperatureSensors tempSensors;
+    NetworkManager network{
+        WIFI_SSID,
+        WIFI_PASSWORD,
+        DEVICE_HOSTNAME,
+        OTA_PASSWORD
+    };
 };

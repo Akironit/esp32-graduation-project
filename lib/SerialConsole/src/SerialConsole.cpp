@@ -8,27 +8,185 @@ void SerialConsole::begin(FujiHeatPump* hp, VfdController* vfd, TemperatureSenso
     this->temp = temp;
 
     Serial.begin(115200);
-    Serial.println();
-    Serial.println("-=-=-=-=- ESP32: Start -=-=-=-=-");
-    Serial.println("Type 'help' for available commands");
-    Serial.println();
+    println();
+    println("-=-=-=-=- ESP32: Start -=-=-=-=-");
+    println("Type 'help' for available commands");
+    println();
+}
+
+void SerialConsole::startTelnet() {
+    if (telnetStarted) {
+        return;
+    }
+
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("[TELNET] Wi-Fi is not connected, Telnet server not started");
+        return;
+    }
+
+    telnetServer.begin();
+    telnetServer.setNoDelay(true);
+    telnetStarted = true;
+
+    Serial.print("[TELNET] Server started at ");
+    Serial.print(WiFi.localIP());
+    Serial.println(":23");
 }
 
 
 void SerialConsole::update() {
-    if (!Serial.available()) {
+    updateSerialInput();
+    updateTelnet();
+}
+
+
+void SerialConsole::updateSerialInput() {
+    while (Serial.available()) {
+        char c = (char)Serial.read();
+        handleInputChar(c, serialBuffer);
+    }
+}
+
+
+void SerialConsole::print(const String& value) {
+    Serial.print(value);
+
+    if (telnetClient && telnetClient.connected()) {
+        telnetClient.print(value);
+    }
+}
+
+void SerialConsole::print(const char* value) {
+    Serial.print(value);
+
+    if (telnetClient && telnetClient.connected()) {
+        telnetClient.print(value);
+    }
+}
+
+void SerialConsole::print(int value) {
+    Serial.print(value);
+
+    if (telnetClient && telnetClient.connected()) {
+        telnetClient.print(value);
+    }
+}
+
+void SerialConsole::print(uint16_t value) {
+    Serial.print(value);
+
+    if (telnetClient && telnetClient.connected()) {
+        telnetClient.print(value);
+    }
+}
+
+void SerialConsole::print(float value, int digits) {
+    Serial.print(value, digits);
+
+    if (telnetClient && telnetClient.connected()) {
+        telnetClient.print(value, digits);
+    }
+}
+
+
+void SerialConsole::println() {
+    Serial.println();
+
+    if (telnetClient && telnetClient.connected()) {
+        telnetClient.println();
+    }
+}
+
+void SerialConsole::println(const String& value) {
+    Serial.println(value);
+
+    if (telnetClient && telnetClient.connected()) {
+        telnetClient.println(value);
+    }
+}
+
+void SerialConsole::println(const char* value) {
+    Serial.println(value);
+
+    if (telnetClient && telnetClient.connected()) {
+        telnetClient.println(value);
+    }
+}
+
+void SerialConsole::println(int value) {
+    Serial.println(value);
+
+    if (telnetClient && telnetClient.connected()) {
+        telnetClient.println(value);
+    }
+}
+
+void SerialConsole::println(uint16_t value) {
+    Serial.println(value);
+
+    if (telnetClient && telnetClient.connected()) {
+        telnetClient.println(value);
+    }
+}
+
+void SerialConsole::println(float value, int digits) {
+    Serial.println(value, digits);
+
+    if (telnetClient && telnetClient.connected()) {
+        telnetClient.println(value, digits);
+    }
+}
+
+
+void SerialConsole::updateTelnet() {
+    if (!telnetClient || !telnetClient.connected()) {
+        WiFiClient newClient = telnetServer.available();
+
+        if (newClient) {
+            if (telnetClient) {
+                telnetClient.stop();
+            }
+
+            telnetClient = newClient;
+            telnetClient.setNoDelay(true);
+
+            println();
+            println("[TELNET] Client connected");
+            println("-=-=-=-=- ESP32 Telnet Console -=-=-=-=-");
+            println("Type 'help' for available commands");
+            println();
+        }
+
         return;
     }
 
-    String cmd = Serial.readStringUntil('\n');
-    cmd.trim();
-    cmd.toLowerCase();
+    while (telnetClient.available()) {
+        char c = (char)telnetClient.read();
+        handleInputChar(c, telnetBuffer);
+    }
+}
 
-    if (cmd.length() == 0) {
+
+void SerialConsole::handleInputChar(char c, String& buffer) {
+    if (c == '\r') {
         return;
     }
 
-    processCommand(cmd);
+    if (c == '\n') {
+        buffer.trim();
+        buffer.toLowerCase();
+
+        if (buffer.length() > 0) {
+            processCommand(buffer);
+        }
+
+        buffer = "";
+        return;
+    }
+
+    if (buffer.length() < 128) {
+        buffer += c;
+    }
 }
 
 
@@ -63,38 +221,38 @@ void SerialConsole::processCommand(const String& cmd) {
         return;
     }
 
-    Serial.println("Unknown command. Use: ac <cmd>, vfd <cmd>, temp <cmd>");
-    Serial.println("Type 'help' for available commands");
+    println("Unknown command. Use: ac <cmd>, vfd <cmd>, temp <cmd>");
+    println("Type 'help' for available commands");
 }
 
 
 void SerialConsole::processAcCommand(const String& cmd) {
     if (hp == nullptr) {
-        Serial.println("Error: heat pump module is not connected to console");
+        println("Error: heat pump module is not connected to console");
         return;
     }
 
     if (cmd == "debug on") {
         hp->setDebug(true);
-        Serial.println("=== AC debug ENABLED ===");
+        println("=== AC debug ENABLED ===");
         return;
     }
 
     if (cmd == "debug off") {
         hp->setDebug(false);
-        Serial.println("=== AC debug DISABLED ===");
+        println("=== AC debug DISABLED ===");
         return;
     }
 
     if (cmd == "on") {
         hp->setOnOff(true);
-        Serial.println(">>> AC: Power ON");
+        println(">>> AC: Power ON");
         return;
     }
 
     if (cmd == "off") {
         hp->setOnOff(false);
-        Serial.println(">>> AC: Power OFF");
+        println(">>> AC: Power OFF");
         return;
     }
 
@@ -103,10 +261,10 @@ void SerialConsole::processAcCommand(const String& cmd) {
 
         if (temp >= 16 && temp <= 30) {
             hp->setTemp(temp);
-            Serial.print(">>> AC: Set temperature ");
-            Serial.println(temp);
+            print(">>> AC: Set temperature ");
+            println(temp);
         } else {
-            Serial.println("Error: temp must be 16-30");
+            println("Error: temp must be 16-30");
         }
 
         return;
@@ -127,13 +285,13 @@ void SerialConsole::processAcCommand(const String& cmd) {
         } else if (modeStr == "auto") {
             modeVal = 5;
         } else {
-            Serial.println("Error: mode fan/dry/cool/heat/auto");
+            println("Error: mode fan/dry/cool/heat/auto");
             return;
         }
 
         hp->setMode(modeVal);
-        Serial.print(">>> AC: Set mode ");
-        Serial.println(modeStr);
+        print(">>> AC: Set mode ");
+        println(modeStr);
         return;
     }
 
@@ -142,10 +300,10 @@ void SerialConsole::processAcCommand(const String& cmd) {
 
         if (speed <= 4) {
             hp->setFanMode(speed);
-            Serial.print(">>> AC: Set fan mode ");
-            Serial.println(speed);
+            print(">>> AC: Set fan mode ");
+            println(speed);
         } else {
-            Serial.println("Error: fan mode: 0-4");
+            println("Error: fan mode: 0-4");
         }
 
         return;
@@ -156,31 +314,31 @@ void SerialConsole::processAcCommand(const String& cmd) {
         return;
     }
 
-    Serial.println("Unknown AC command. Type 'ac help'");
+    println("Unknown AC command. Type 'ac help'");
 }
 
 
 void SerialConsole::processVfdCommand(const String& cmd) {
     if (vfd == nullptr) {
-        Serial.println("Error: VFD module is not connected to console");
+        println("Error: VFD module is not connected to console");
         return;
     }
 
     if (cmd == "fwd") {
         vfd->forward();
-        Serial.println(">>> VFD: Forward");
+        println(">>> VFD: Forward");
         return;
     }
 
     if (cmd == "rev") {
         vfd->reverse();
-        Serial.println(">>> VFD: Reverse");
+        println(">>> VFD: Reverse");
         return;
     }
 
     if (cmd == "stop") {
         vfd->stop();
-        Serial.println(">>> VFD: Stop");
+        println(">>> VFD: Stop");
         return;
     }
 
@@ -188,15 +346,15 @@ void SerialConsole::processVfdCommand(const String& cmd) {
         float hz = cmd.substring(3).toFloat();
 
         if (hz < 0.0f) {
-            Serial.println("Error: frequency must be >= 0");
+            println("Error: frequency must be >= 0");
             return;
         }
 
         vfd->setFrequency(hz);
 
-        Serial.print(">>> VFD: Set frequency ");
-        Serial.print(hz, 2);
-        Serial.println(" Hz");
+        print(">>> VFD: Set frequency ");
+        print(hz, 2);
+        println(" Hz");
         return;
     }
 
@@ -204,7 +362,7 @@ void SerialConsole::processVfdCommand(const String& cmd) {
         int separator = cmd.indexOf(' ', 5);
 
         if (separator < 0) {
-            Serial.println("Format: vfd read <hexAddr> <count>");
+            println("Format: vfd read <hexAddr> <count>");
             return;
         }
 
@@ -216,12 +374,12 @@ void SerialConsole::processVfdCommand(const String& cmd) {
         uint16_t count = (uint16_t)countStr.toInt();
 
         if (!okAddress || count == 0) {
-            Serial.println("Error: bad read arguments");
+            println("Error: bad read arguments");
             return;
         }
 
         vfd->readRegister(address, count);
-        Serial.println(">>> VFD: Read request queued");
+        println(">>> VFD: Read request queued");
         return;
     }
 
@@ -229,7 +387,7 @@ void SerialConsole::processVfdCommand(const String& cmd) {
         int separator = cmd.indexOf(' ', 6);
 
         if (separator < 0) {
-            Serial.println("Format: vfd write <hexAddr> <hexVal>");
+            println("Format: vfd write <hexAddr> <hexVal>");
             return;
         }
 
@@ -243,95 +401,95 @@ void SerialConsole::processVfdCommand(const String& cmd) {
         uint16_t value = parseHexU16(valueStr, okValue);
 
         if (!okAddress || !okValue) {
-            Serial.println("Error: bad write arguments");
+            println("Error: bad write arguments");
             return;
         }
 
         vfd->writeRegister(address, value);
-        Serial.println(">>> VFD: Write request queued");
+        println(">>> VFD: Write request queued");
         return;
     }
 
-    Serial.println("Unknown VFD command. Type 'vfd help'");
+    println("Unknown VFD command. Type 'vfd help'");
 }
 
 
 void SerialConsole::printAcStatus() {
     if (hp == nullptr) {
-        Serial.println("Error: heat pump module is not connected to console");
+        println("Error: heat pump module is not connected to console");
         return;
     }
 
-    Serial.println();
-    Serial.println("--- AC STATUS ---");
-    Serial.print("Power: ");
-    Serial.println(hp->getOnOff() ? "ON" : "OFF");
-    Serial.print("Temp: ");
-    Serial.println(hp->getTemp());
-    Serial.print("Mode: ");
-    Serial.println(hp->getMode());
-    Serial.print("Fan: ");
-    Serial.println(hp->getFanMode());
-    Serial.print("Bound: ");
-    Serial.println(hp->isBound() ? "YES" : "NO");
-    Serial.println("-----------------");
-    Serial.println();
+    println();
+    println("--- AC STATUS ---");
+    print("Power: ");
+    println(hp->getOnOff() ? "ON" : "OFF");
+    print("Temp: ");
+    println(hp->getTemp());
+    print("Mode: ");
+    println(hp->getMode());
+    print("Fan: ");
+    println(hp->getFanMode());
+    print("Bound: ");
+    println(hp->isBound() ? "YES" : "NO");
+    println("-----------------");
+    println();
 }
 
 
 void SerialConsole::printHelp() {
-    Serial.println();
-    Serial.println("--- Available command groups ---");
-    Serial.println("ac <command>   - Air conditioner control");
-    Serial.println("vfd <command>  - Frequency drive control");
-    Serial.println("temp <command> - Temperature sensors control");
-    Serial.println();
-    Serial.println("Examples:");
-    Serial.println("ac on");
-    Serial.println("ac temp 23");
-    Serial.println("ac status");
-    Serial.println("vfd fwd");
-    Serial.println("vfd hz 10.0");
-    Serial.println("vfd stop");
-    Serial.println("temp status");
-    Serial.println("temp read");
-    Serial.println();
-    Serial.println("Type 'ac help', 'vfd help' or 'temp help'");
-    Serial.println("------------------------------");
-    Serial.println();
+    println();
+    println("--- Available command groups ---");
+    println("ac <command>   - Air conditioner control");
+    println("vfd <command>  - Frequency drive control");
+    println("temp <command> - Temperature sensors control");
+    println();
+    println("Examples:");
+    println("ac on");
+    println("ac temp 23");
+    println("ac status");
+    println("vfd fwd");
+    println("vfd hz 10.0");
+    println("vfd stop");
+    println("temp status");
+    println("temp read");
+    println();
+    println("Type 'ac help', 'vfd help' or 'temp help'");
+    println("------------------------------");
+    println();
 }
 
 
 void SerialConsole::printAcHelp() {
-    Serial.println();
-    Serial.println("--- AC commands ---");
-    Serial.println("ac debug on/off");
-    Serial.println("ac on/off");
-    Serial.println("ac temp 16-30");
-    Serial.println("ac mode fan/dry/cool/heat/auto");
-    Serial.println("ac fan 0-4");
-    Serial.println("ac status");
-    Serial.println("-------------------");
-    Serial.println();
+    println();
+    println("--- AC commands ---");
+    println("ac debug on/off");
+    println("ac on/off");
+    println("ac temp 16-30");
+    println("ac mode fan/dry/cool/heat/auto");
+    println("ac fan 0-4");
+    println("ac status");
+    println("-------------------");
+    println();
 }
 
 
 void SerialConsole::printVfdHelp() {
-    Serial.println();
-    Serial.println("--- VFD commands ---");
-    Serial.println("vfd fwd");
-    Serial.println("vfd rev");
-    Serial.println("vfd stop");
-    Serial.println("vfd hz <frequency>");
-    Serial.println("vfd read <hexAddr> <count>");
-    Serial.println("vfd write <hexAddr> <hexVal>");
-    Serial.println();
-    Serial.println("Examples:");
-    Serial.println("vfd hz 10.0");
-    Serial.println("vfd read 2100 1");
-    Serial.println("vfd write 2000 0001");
-    Serial.println("--------------------");
-    Serial.println();
+    println();
+    println("--- VFD commands ---");
+    println("vfd fwd");
+    println("vfd rev");
+    println("vfd stop");
+    println("vfd hz <frequency>");
+    println("vfd read <hexAddr> <count>");
+    println("vfd write <hexAddr> <hexVal>");
+    println();
+    println("Examples:");
+    println("vfd hz 10.0");
+    println("vfd read 2100 1");
+    println("vfd write 2000 0001");
+    println("--------------------");
+    println();
 }
 
 
@@ -359,7 +517,7 @@ void SerialConsole::processTempCommand(const String& cmd) {
     args.trim();
 
     if (temp == nullptr) {
-        Serial.println("[TEMP] TemperatureSensors module is not connected to console");
+        println("[TEMP] TemperatureSensors module is not connected to console");
         return;
     }
 
@@ -381,14 +539,14 @@ void SerialConsole::processTempCommand(const String& cmd) {
     }
 
     if (args == "help") {
-        Serial.println();
-        Serial.println("[TEMP] Commands:");
-        Serial.println("  temp status   - show last temperature readings");
-        Serial.println("  temp read     - force temperature reading and show result");
-        Serial.println("  temp scan     - rescan OneWire bus and show addresses");
-        Serial.println("  temp help     - show this help");
+        println();
+        println("[TEMP] Commands:");
+        println("  temp status   - show last temperature readings");
+        println("  temp read     - force temperature reading and show result");
+        println("  temp scan     - rescan OneWire bus and show addresses");
+        println("  temp help     - show this help");
         return;
     }
 
-    Serial.println("[TEMP] Unknown temp command. Use: temp help");
+    println("[TEMP] Unknown temp command. Use: temp help");
 }
