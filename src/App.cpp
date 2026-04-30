@@ -4,10 +4,12 @@
 
 void App::begin() {
     
-    console.begin(&hp);
+    console.begin(&hp, &vfd);
 
-    hp.connect(&Serial2, false, 16, 17);
-    hp.setDebug(true);
+    hp.connect(&Serial1, IS_SECONDARY_CONTROLLER, AC_LIN_TX1_PIN, AC_LIN_RX1_PIN);
+    hp.setDebug(AC_DEBUG);
+
+    vfd.begin(Serial2, RS485_RX2_PIN, RS485_TX2_PIN, RS485_BAUD, SERIAL_8E1);
 }
 
 
