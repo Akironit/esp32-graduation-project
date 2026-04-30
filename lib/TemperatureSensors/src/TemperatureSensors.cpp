@@ -1,6 +1,12 @@
 // TemperatureSensors.cpp
 #include "TemperatureSensors.h"
 
+#include "Logger.h"
+
+namespace {
+constexpr const char* TAG_TEMP = "TEMP";
+}
+
 void TemperatureSensors::begin(uint8_t pin) {
     oneWire = new OneWire(pin);
     sensors = new DallasTemperature(oneWire);
@@ -14,9 +20,8 @@ void TemperatureSensors::begin(uint8_t pin) {
     readAddresses();
     readTemperatures();
 
-    Serial.println("[TEMP] DS18B20 initialized");
-    Serial.print("[TEMP] Found sensors: ");
-    Serial.println(sensorCount);
+    Logger::info(TAG_TEMP, "DS18B20 initialized");
+    Logger::infof(TAG_TEMP, "Found sensors: %u", sensorCount);
 }
 
 void TemperatureSensors::update() {
@@ -79,59 +84,59 @@ void TemperatureSensors::readTemperatures() {
     }
 }
 
-void TemperatureSensors::printStatus(Stream& stream) {
-    stream.println();
-    stream.println("[TEMP] Temperature sensors status");
+void TemperatureSensors::printStatus(Print& output) {
+    output.println();
+    output.println("[TEMP] Temperature sensors status");
 
     if (sensorCount == 0) {
-        stream.println("[TEMP] No DS18B20 sensors found");
+        output.println("[TEMP] No DS18B20 sensors found");
         return;
     }
 
     for (uint8_t i = 0; i < sensorCount; i++) {
-        stream.print("[TEMP] Sensor ");
-        stream.print(i);
-        stream.print(" ");
+        output.print("[TEMP] Sensor ");
+        output.print(i);
+        output.print(" ");
 
-        printAddress(stream, addresses[i]);
+        printAddress(output, addresses[i]);
 
-        stream.print(" = ");
+        output.print(" = ");
 
         if (temperatures[i] == DEVICE_DISCONNECTED_C) {
-            stream.println("DISCONNECTED");
+            output.println("DISCONNECTED");
         } else {
-            stream.print(temperatures[i], 2);
-            stream.println(" °C");
+            output.print(temperatures[i], 2);
+            output.println(" °C");
         }
     }
 }
 
-void TemperatureSensors::printAddresses(Stream& stream) {
-    stream.println();
-    stream.println("[TEMP] DS18B20 addresses");
+void TemperatureSensors::printAddresses(Print& output) {
+    output.println();
+    output.println("[TEMP] DS18B20 addresses");
 
     if (sensorCount == 0) {
-        stream.println("[TEMP] No DS18B20 sensors found");
+        output.println("[TEMP] No DS18B20 sensors found");
         return;
     }
 
     for (uint8_t i = 0; i < sensorCount; i++) {
-        stream.print("[TEMP] Sensor ");
-        stream.print(i);
-        stream.print(" address: ");
+        output.print("[TEMP] Sensor ");
+        output.print(i);
+        output.print(" address: ");
 
-        printAddress(stream, addresses[i]);
+        printAddress(output, addresses[i]);
 
-        stream.println();
+        output.println();
     }
 }
 
-void TemperatureSensors::printAddress(Stream& stream, const DeviceAddress& address) {
+void TemperatureSensors::printAddress(Print& output, const DeviceAddress& address) {
     for (uint8_t i = 0; i < 8; i++) {
         if (address[i] < 16) {
-            stream.print("0");
+            output.print("0");
         }
 
-        stream.print(address[i], HEX);
+        output.print(address[i], HEX);
     }
 }

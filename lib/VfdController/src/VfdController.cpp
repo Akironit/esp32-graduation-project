@@ -1,6 +1,12 @@
 // VfdController.cpp
 #include "VfdController.h"
 
+#include "Logger.h"
+
+namespace {
+constexpr const char* TAG_VFD = "VFD";
+}
+
 
 VfdController* VfdController::activeInstance = nullptr;
 
@@ -27,7 +33,7 @@ void VfdController::begin(
 
     client.begin(serial);
 
-    Serial.println("VFD controller initialized");
+    Logger::info(TAG_VFD, "Controller initialized");
 }
 
 
@@ -110,27 +116,31 @@ void VfdController::queueWriteSingle(uint16_t address, uint16_t value) {
 
 
 void VfdController::onData(ModbusMessage msg, uint32_t token) {
-    Serial.printf(
-        "VFD OK token=%lu server=%u FC=%u len=%u : ",
+    Logger::infof(
+        TAG_VFD,
+        "OK token=%lu server=%u FC=%u len=%u",
         (unsigned long)token,
         msg.getServerID(),
         msg.getFunctionCode(),
         (unsigned)msg.size()
     );
 
+    Logger::raw("[VFD] Data: ");
+
     for (auto& byteValue : msg) {
-        Serial.printf("%02X ", byteValue);
+        Logger::rawf("%02X ", byteValue);
     }
 
-    Serial.println();
+    Logger::raw("\n");
 }
 
 
 void VfdController::onError(Error error, uint32_t token) {
     ModbusError modbusError(error);
 
-    Serial.printf(
-        "VFD ERR token=%lu code=%02X (%s)\n",
+    Logger::errorf(
+        TAG_VFD,
+        "ERR token=%lu code=%02X (%s)",
         (unsigned long)token,
         (uint8_t)error,
         (const char*)modbusError

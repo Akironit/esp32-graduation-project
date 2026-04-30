@@ -1,6 +1,39 @@
 // SerialConsole.cpp
 #include "SerialConsole.h"
 
+#include "Logger.h"
+
+namespace {
+constexpr const char* TAG_TELNET = "TELNET";
+}
+
+
+SerialConsole::ConsoleOutput::ConsoleOutput(SerialConsole& console)
+    : console(console) {
+}
+
+
+size_t SerialConsole::ConsoleOutput::write(uint8_t value) {
+    Serial.write(value);
+
+    if (console.telnetClient && console.telnetClient.connected()) {
+        console.telnetClient.write(value);
+    }
+
+    return 1;
+}
+
+
+size_t SerialConsole::ConsoleOutput::write(const uint8_t* buffer, size_t size) {
+    Serial.write(buffer, size);
+
+    if (console.telnetClient && console.telnetClient.connected()) {
+        console.telnetClient.write(buffer, size);
+    }
+
+    return size;
+}
+
 
 void SerialConsole::begin(FujiHeatPump* hp, VfdController* vfd, TemperatureSensors* temp) {
     this->hp = hp;
@@ -8,6 +41,8 @@ void SerialConsole::begin(FujiHeatPump* hp, VfdController* vfd, TemperatureSenso
     this->temp = temp;
 
     Serial.begin(115200);
+    Logger::begin(consoleOutput);
+
     println();
     println("-=-=-=-=- ESP32: Start -=-=-=-=-");
     println("Type 'help' for available commands");
@@ -20,7 +55,7 @@ void SerialConsole::startTelnet() {
     }
 
     if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("[TELNET] Wi-Fi is not connected, Telnet server not started");
+        Logger::warning(TAG_TELNET, "Wi-Fi is not connected, Telnet server not started");
         return;
     }
 
@@ -28,9 +63,7 @@ void SerialConsole::startTelnet() {
     telnetServer.setNoDelay(true);
     telnetStarted = true;
 
-    Serial.print("[TELNET] Server started at ");
-    Serial.print(WiFi.localIP());
-    Serial.println(":23");
+    Logger::infof(TAG_TELNET, "Server started at %s:23", WiFi.localIP().toString().c_str());
 }
 
 
@@ -43,98 +76,54 @@ void SerialConsole::update() {
 void SerialConsole::updateSerialInput() {
     while (Serial.available()) {
         char c = (char)Serial.read();
-        handleInputChar(c, serialBuffer);
+        handleInputChar(c, serialBuffer, false, serialLastInputWasCarriageReturn);
     }
 }
 
 
 void SerialConsole::print(const String& value) {
-    Serial.print(value);
-
-    if (telnetClient && telnetClient.connected()) {
-        telnetClient.print(value);
-    }
+    consoleOutput.print(value);
 }
 
 void SerialConsole::print(const char* value) {
-    Serial.print(value);
-
-    if (telnetClient && telnetClient.connected()) {
-        telnetClient.print(value);
-    }
+    consoleOutput.print(value);
 }
 
 void SerialConsole::print(int value) {
-    Serial.print(value);
-
-    if (telnetClient && telnetClient.connected()) {
-        telnetClient.print(value);
-    }
+    consoleOutput.print(value);
 }
 
 void SerialConsole::print(uint16_t value) {
-    Serial.print(value);
-
-    if (telnetClient && telnetClient.connected()) {
-        telnetClient.print(value);
-    }
+    consoleOutput.print(value);
 }
 
 void SerialConsole::print(float value, int digits) {
-    Serial.print(value, digits);
-
-    if (telnetClient && telnetClient.connected()) {
-        telnetClient.print(value, digits);
-    }
+    consoleOutput.print(value, digits);
 }
 
 
 void SerialConsole::println() {
-    Serial.println();
-
-    if (telnetClient && telnetClient.connected()) {
-        telnetClient.println();
-    }
+    consoleOutput.println();
 }
 
 void SerialConsole::println(const String& value) {
-    Serial.println(value);
-
-    if (telnetClient && telnetClient.connected()) {
-        telnetClient.println(value);
-    }
+    consoleOutput.println(value);
 }
 
 void SerialConsole::println(const char* value) {
-    Serial.println(value);
-
-    if (telnetClient && telnetClient.connected()) {
-        telnetClient.println(value);
-    }
+    consoleOutput.println(value);
 }
 
 void SerialConsole::println(int value) {
-    Serial.println(value);
-
-    if (telnetClient && telnetClient.connected()) {
-        telnetClient.println(value);
-    }
+    consoleOutput.println(value);
 }
 
 void SerialConsole::println(uint16_t value) {
-    Serial.println(value);
-
-    if (telnetClient && telnetClient.connected()) {
-        telnetClient.println(value);
-    }
+    consoleOutput.println(value);
 }
 
 void SerialConsole::println(float value, int digits) {
-    Serial.println(value, digits);
-
-    if (telnetClient && telnetClient.connected()) {
-        telnetClient.println(value, digits);
-    }
+    consoleOutput.println(value, digits);
 }
 
 
@@ -155,6 +144,7 @@ void SerialConsole::updateTelnet() {
             println("-=-=-=-=- ESP32 Telnet Console -=-=-=-=-");
             println("Type 'help' for available commands");
             println();
+            printPrompt();
         }
 
         return;
@@ -162,31 +152,79 @@ void SerialConsole::updateTelnet() {
 
     while (telnetClient.available()) {
         char c = (char)telnetClient.read();
-        handleInputChar(c, telnetBuffer);
+        handleInputChar(c, telnetBuffer, true, telnetLastInputWasCarriageReturn);
     }
 }
 
 
-void SerialConsole::handleInputChar(char c, String& buffer) {
+void SerialConsole::handleInputChar(
+    char c,
+    String& buffer,
+    bool echo,
+    bool& lastInputWasCarriageReturn
+) {
     if (c == '\r') {
+        handleInputLine(buffer, echo);
+        lastInputWasCarriageReturn = true;
         return;
     }
 
     if (c == '\n') {
-        buffer.trim();
-        buffer.toLowerCase();
-
-        if (buffer.length() > 0) {
-            processCommand(buffer);
+        if (lastInputWasCarriageReturn) {
+            lastInputWasCarriageReturn = false;
+            return;
         }
 
-        buffer = "";
+        handleInputLine(buffer, echo);
+        return;
+    }
+
+    lastInputWasCarriageReturn = false;
+
+    if (c == '\b' || c == 127) {
+        if (buffer.length() > 0) {
+            buffer.remove(buffer.length() - 1);
+
+            if (echo) {
+                print("\b \b");
+            }
+        }
+
         return;
     }
 
     if (buffer.length() < 128) {
         buffer += c;
+
+        if (echo) {
+            print(String(c));
+        }
     }
+}
+
+
+void SerialConsole::handleInputLine(String& buffer, bool echo) {
+    if (echo) {
+        println();
+    }
+
+    buffer.trim();
+    buffer.toLowerCase();
+
+    if (buffer.length() > 0) {
+        processCommand(buffer);
+    }
+
+    buffer = "";
+
+    if (echo) {
+        printPrompt();
+    }
+}
+
+
+void SerialConsole::printPrompt() {
+    print("esp32> ");
 }
 
 
@@ -522,19 +560,19 @@ void SerialConsole::processTempCommand(const String& cmd) {
     }
 
     if (args.length() == 0 || args == "status") {
-        temp->printStatus(Serial);
+        temp->printStatus(consoleOutput);
         return;
     }
 
     if (args == "read") {
         temp->forceRead();
-        temp->printStatus(Serial);
+        temp->printStatus(consoleOutput);
         return;
     }
 
     if (args == "scan") {
         temp->rescan();
-        temp->printAddresses(Serial);
+        temp->printAddresses(consoleOutput);
         return;
     }
 

@@ -3,6 +3,12 @@
 
 #include <WiFi.h>
 #include <ArduinoOTA.h>
+#include "Logger.h"
+
+namespace {
+constexpr const char* TAG_NET = "NET";
+constexpr const char* TAG_OTA = "OTA";
+}
 
 NetworkManager::NetworkManager(
     const char* ssid,
@@ -17,7 +23,7 @@ NetworkManager::NetworkManager(
 }
 
 void NetworkManager::begin() {
-    Serial.println("[NET] Initializing network...");
+    Logger::info(TAG_NET, "Initializing network...");
 
     WiFi.mode(WIFI_STA);
     WiFi.setHostname(hostname);
@@ -41,7 +47,7 @@ void NetworkManager::update() {
     if (now - lastReconnectAttemptMs >= RECONNECT_INTERVAL_MS) {
         lastReconnectAttemptMs = now;
 
-        Serial.println("[NET] Wi-Fi disconnected, reconnecting...");
+        Logger::warning(TAG_NET, "Wi-Fi disconnected, reconnecting...");
         WiFi.disconnect();
         WiFi.begin(ssid, password);
     }
@@ -56,8 +62,7 @@ IPAddress NetworkManager::getIp() const {
 }
 
 void NetworkManager::connectWiFi() {
-    Serial.print("[NET] Connecting to Wi-Fi: ");
-    Serial.println(ssid);
+    Logger::infof(TAG_NET, "Connecting to Wi-Fi: %s", ssid);
 
     WiFi.begin(ssid, password);
 
@@ -66,17 +71,16 @@ void NetworkManager::connectWiFi() {
 
     while (WiFi.status() != WL_CONNECTED && millis() - startMs < timeoutMs) {
         delay(250);
-        Serial.print(".");
+        Logger::raw(".");
     }
 
-    Serial.println();
+    Logger::raw("\n");
 
     if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("[NET] Wi-Fi connected");
-        Serial.print("[NET] IP address: ");
-        Serial.println(WiFi.localIP());
+        Logger::info(TAG_NET, "Wi-Fi connected");
+        Logger::infof(TAG_NET, "IP address: %s", WiFi.localIP().toString().c_str());
     } else {
-        Serial.println("[NET] Wi-Fi connection timeout");
+        Logger::warning(TAG_NET, "Wi-Fi connection timeout");
     }
 }
 
@@ -85,39 +89,36 @@ void NetworkManager::setupOTA() {
     ArduinoOTA.setPassword(otaPassword);
 
     ArduinoOTA.onStart([]() {
-        Serial.println("[OTA] Start");
+        Logger::info(TAG_OTA, "Start");
     });
 
     ArduinoOTA.onEnd([]() {
-        Serial.println();
-        Serial.println("[OTA] End");
+        Logger::raw("\n");
+        Logger::info(TAG_OTA, "End");
     });
 
     ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-        Serial.printf("[OTA] Progress: %u%%\r", (progress * 100) / total);
+        Logger::rawf("[OTA] Progress: %u%%\r", (progress * 100) / total);
     });
 
     ArduinoOTA.onError([](ota_error_t error) {
-        Serial.printf("[OTA] Error[%u]: ", error);
-
         if (error == OTA_AUTH_ERROR) {
-            Serial.println("Auth failed");
+            Logger::errorf(TAG_OTA, "Error[%u]: Auth failed", error);
         } else if (error == OTA_BEGIN_ERROR) {
-            Serial.println("Begin failed");
+            Logger::errorf(TAG_OTA, "Error[%u]: Begin failed", error);
         } else if (error == OTA_CONNECT_ERROR) {
-            Serial.println("Connect failed");
+            Logger::errorf(TAG_OTA, "Error[%u]: Connect failed", error);
         } else if (error == OTA_RECEIVE_ERROR) {
-            Serial.println("Receive failed");
+            Logger::errorf(TAG_OTA, "Error[%u]: Receive failed", error);
         } else if (error == OTA_END_ERROR) {
-            Serial.println("End failed");
+            Logger::errorf(TAG_OTA, "Error[%u]: End failed", error);
         } else {
-            Serial.println("Unknown error");
+            Logger::errorf(TAG_OTA, "Error[%u]: Unknown error", error);
         }
     });
 
     ArduinoOTA.begin();
 
-    Serial.println("[OTA] Ready");
-    Serial.print("[OTA] Hostname: ");
-    Serial.println(hostname);
+    Logger::info(TAG_OTA, "Ready");
+    Logger::infof(TAG_OTA, "Hostname: %s", hostname);
 }

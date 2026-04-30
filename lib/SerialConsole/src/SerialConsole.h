@@ -17,23 +17,39 @@ public:
     void startTelnet();
 
 private:
+    class ConsoleOutput : public Print {
+    public:
+        explicit ConsoleOutput(SerialConsole& console);
+
+        size_t write(uint8_t value) override;
+        size_t write(const uint8_t* buffer, size_t size) override;
+
+    private:
+        SerialConsole& console;
+    };
+
     FujiHeatPump* hp = nullptr;
     VfdController* vfd = nullptr;
     TemperatureSensors* temp = nullptr;
 
     WiFiServer telnetServer{23};
     WiFiClient telnetClient;
+    ConsoleOutput consoleOutput{*this};
 
     bool telnetStarted = false;
     uint8_t telnetNegotiationBytesToSkip = 0;
 
     String serialBuffer;
     String telnetBuffer;
+    bool serialLastInputWasCarriageReturn = false;
+    bool telnetLastInputWasCarriageReturn = false;
 
     void updateSerialInput();
     void updateTelnet();
     bool isTelnetCommandByte(uint8_t value);
-    void handleInputChar(char c, String& buffer);
+    void handleInputChar(char c, String& buffer, bool echo, bool& lastInputWasCarriageReturn);
+    void handleInputLine(String& buffer, bool echo);
+    void printPrompt();
 
     void processCommand(const String& cmd);
 

@@ -13,8 +13,8 @@ public:
     void begin(uint8_t pin);
     void update();
 
-    void printStatus(Stream& stream);
-    void printAddresses(Stream& stream);
+    void printStatus(Print& output);
+    void printAddresses(Print& output);
     void forceRead();
     void rescan();
 
@@ -34,5 +34,5 @@ private:
 
     void readAddresses();
     void readTemperatures();
-    void printAddress(Stream& stream, const DeviceAddress& address);
+    void printAddress(Print& output, const DeviceAddress& address);
 };
