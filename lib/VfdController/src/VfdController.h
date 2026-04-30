@@ -2,7 +2,7 @@
 #pragma once
 
 #include <Arduino.h>
-#include "ModbusClientRTU.h"
+#include <ModbusClientRTU.h>
 
 class VfdController {
 public:

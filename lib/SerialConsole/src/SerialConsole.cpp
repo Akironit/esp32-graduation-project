@@ -2,9 +2,10 @@
 #include "SerialConsole.h"
 
 
-void SerialConsole::begin(FujiHeatPump* heatPump, VfdController* vfdController) {
-    hp = heatPump;
-    vfd = vfdController;
+void SerialConsole::begin(FujiHeatPump* hp, VfdController* vfd, TemperatureSensors* temp) {
+    this->hp = hp;
+    this->vfd = vfd;
+    this->temp = temp;
 
     Serial.begin(115200);
     Serial.println();
@@ -57,7 +58,12 @@ void SerialConsole::processCommand(const String& cmd) {
         return;
     }
 
-    Serial.println("Unknown command. Use: ac <command> or vfd <command>");
+    if (cmd.startsWith("temp ")) {
+        processTempCommand(cmd.substring(5));
+        return;
+    }
+
+    Serial.println("Unknown command. Use: ac <cmd>, vfd <cmd>, temp <cmd>");
     Serial.println("Type 'help' for available commands");
 }
 
@@ -278,6 +284,7 @@ void SerialConsole::printHelp() {
     Serial.println("--- Available command groups ---");
     Serial.println("ac <command>   - Air conditioner control");
     Serial.println("vfd <command>  - Frequency drive control");
+    Serial.println("temp <command> - Temperature sensors control");
     Serial.println();
     Serial.println("Examples:");
     Serial.println("ac on");
@@ -286,8 +293,10 @@ void SerialConsole::printHelp() {
     Serial.println("vfd fwd");
     Serial.println("vfd hz 10.0");
     Serial.println("vfd stop");
+    Serial.println("temp status");
+    Serial.println("temp read");
     Serial.println();
-    Serial.println("Type 'ac help' or 'vfd help'");
+    Serial.println("Type 'ac help', 'vfd help' or 'temp help'");
     Serial.println("------------------------------");
     Serial.println();
 }
@@ -342,4 +351,44 @@ uint16_t SerialConsole::parseHexU16(const String& value, bool& ok) {
 
     ok = true;
     return (uint16_t)parsed;
+}
+
+
+void SerialConsole::processTempCommand(const String& cmd) {
+    String args = cmd;
+    args.trim();
+
+    if (temp == nullptr) {
+        Serial.println("[TEMP] TemperatureSensors module is not connected to console");
+        return;
+    }
+
+    if (args.length() == 0 || args == "status") {
+        temp->printStatus(Serial);
+        return;
+    }
+
+    if (args == "read") {
+        temp->forceRead();
+        temp->printStatus(Serial);
+        return;
+    }
+
+    if (args == "scan") {
+        temp->rescan();
+        temp->printAddresses(Serial);
+        return;
+    }
+
+    if (args == "help") {
+        Serial.println();
+        Serial.println("[TEMP] Commands:");
+        Serial.println("  temp status   - show last temperature readings");
+        Serial.println("  temp read     - force temperature reading and show result");
+        Serial.println("  temp scan     - rescan OneWire bus and show addresses");
+        Serial.println("  temp help     - show this help");
+        return;
+    }
+
+    Serial.println("[TEMP] Unknown temp command. Use: temp help");
 }

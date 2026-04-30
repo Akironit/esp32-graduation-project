@@ -5,6 +5,7 @@
 #include "FujiHeatPump.h"
 #include "SerialConsole.h"
 #include "VfdController.h"
+#include "TemperatureSensors.h"
 
 // -=-=-=-=-= Pin definitions and settings -=-=-=-=-=-
 // AC LIN bus (Serial1)
@@ -20,6 +21,8 @@
 #define RS485_DERE_PIN  18
 #define RS485_BAUD  19200
 
+#define TEMP_ONE_WIRE_PIN 4
+
 
 class App {
 public:
@@ -30,5 +33,5 @@ private:
     FujiHeatPump hp;
     SerialConsole console;
     VfdController vfd{RS485_DERE_PIN};
-
+    TemperatureSensors tempSensors;
 };
