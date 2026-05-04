@@ -49,6 +49,10 @@ void SerialConsole::begin(FujiHeatPump* hp, VfdController* vfd, TemperatureSenso
     this->vfd = vfd;
     this->temp = temp;
 
+    if (this->hp != nullptr) {
+        this->hp->setDebugOutput(&consoleOutput);
+    }
+
     Serial.begin(115200);
     Logger::begin(consoleOutput);
 
@@ -335,37 +339,64 @@ void SerialConsole::processCommand(const String& cmd) {
 
 
 void SerialConsole::processAcCommand(const String& cmd) {
+    String args = cmd;
+    args.trim();
+
     if (hp == nullptr) {
         println("Error: heat pump module is not connected to console");
         return;
     }
 
-    if (cmd == "debug on") {
+    if (args == "debug on") {
         hp->setDebug(true);
         println("=== AC debug ENABLED ===");
         return;
     }
 
-    if (cmd == "debug off") {
+    if (args == "debug off") {
         hp->setDebug(false);
         println("=== AC debug DISABLED ===");
         return;
     }
 
-    if (cmd == "on") {
+    if (args == "role") {
+        print("Current AC controller role: ");
+        println(hp->isPrimaryController() ? "PRIMARY" : "SECONDARY");
+        return;
+    }
+
+    if (args.startsWith("role ")) {
+        String role = args.substring(5);
+
+        if (role == "primary") {
+            hp->setControllerRole(true);
+            println(">>> AC: Controller role set to PRIMARY");
+            println(">>> AC: Handshake state reset, waiting for new frames");
+        } else if (role == "secondary") {
+            hp->setControllerRole(false);
+            println(">>> AC: Controller role set to SECONDARY");
+            println(">>> AC: Handshake state reset, waiting for new frames");
+        } else {
+            println("Error: role must be primary or secondary");
+        }
+
+        return;
+    }
+
+    if (args == "on") {
         hp->setOnOff(true);
         println(">>> AC: Power ON");
         return;
     }
 
-    if (cmd == "off") {
+    if (args == "off") {
         hp->setOnOff(false);
         println(">>> AC: Power OFF");
         return;
     }
 
-    if (cmd.startsWith("temp ")) {
-        int temp = cmd.substring(5).toInt();
+    if (args.startsWith("temp ")) {
+        int temp = args.substring(5).toInt();
 
         if (temp >= 16 && temp <= 30) {
             hp->setTemp(temp);
@@ -378,8 +409,8 @@ void SerialConsole::processAcCommand(const String& cmd) {
         return;
     }
 
-    if (cmd.startsWith("mode ")) {
-        String modeStr = cmd.substring(5);
+    if (args.startsWith("mode ")) {
+        String modeStr = args.substring(5);
         byte modeVal = 0;
 
         if (modeStr == "fan") {
@@ -403,8 +434,8 @@ void SerialConsole::processAcCommand(const String& cmd) {
         return;
     }
 
-    if (cmd.startsWith("fan ")) {
-        byte speed = (byte)cmd.substring(4).toInt();
+    if (args.startsWith("fan ")) {
+        byte speed = (byte)args.substring(4).toInt();
 
         if (speed <= 4) {
             hp->setFanMode(speed);
@@ -417,7 +448,7 @@ void SerialConsole::processAcCommand(const String& cmd) {
         return;
     }
 
-    if (cmd == "status") {
+    if (args == "status") {
         printAcStatus();
         return;
     }
@@ -528,6 +559,9 @@ void SerialConsole::printAcStatus() {
         return;
     }
 
+    char updateMask[8];
+    snprintf(updateMask, sizeof(updateMask), "0x%02X", hp->getUpdateFields());
+
     println();
     println("--- AC STATUS ---");
     print("Power: ");
@@ -540,6 +574,27 @@ void SerialConsole::printAcStatus() {
     println(hp->getFanMode());
     print("Bound: ");
     println(hp->isBound() ? "YES" : "NO");
+    print("Last frame age: ");
+    if (hp->hasReceivedFrame()) {
+        print(String(hp->getLastFrameAgeMs()));
+        println(" ms");
+    } else {
+        println("never");
+    }
+    print("Controller role: ");
+    println(hp->isPrimaryController() ? "PRIMARY" : "SECONDARY");
+    print("Controller address: ");
+    println((uint16_t)hp->getControllerAddress());
+    print("Seen primary: ");
+    println(hp->hasSeenPrimaryController() ? "YES" : "NO");
+    print("Seen secondary: ");
+    println(hp->hasSeenSecondaryController() ? "YES" : "NO");
+    print("Update pending: ");
+    println(hp->updatePending() ? "YES" : "NO");
+    print("Frame pending: ");
+    println(hp->hasPendingFrame() ? "YES" : "NO");
+    print("Update mask: ");
+    println(updateMask);
     print("Debug: ");
     println(hp->debugPrint ? "YES" : "NO");
     println("-----------------");
@@ -577,6 +632,8 @@ void SerialConsole::printAcHelp() {
     println();
     println("--- AC commands ---");
     println("ac debug on/off");
+    println("ac role");
+    println("ac role primary/secondary");
     println("ac on/off");
     println("ac temp 16-30");
     println("ac mode fan/dry/cool/heat/auto");

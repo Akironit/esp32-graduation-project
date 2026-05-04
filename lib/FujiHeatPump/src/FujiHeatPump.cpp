@@ -98,11 +98,19 @@ void FujiHeatPump::connect(HardwareSerial *serial, bool secondary, int rxPin=-1,
     }
     
     lastFrameReceived = 0;
+    updateFields = 0;
+    pendingFrame = false;
+    seenPrimaryController = false;
+    seenSecondaryController = false;
 }
 
-void FujiHeatPump::printFrame(byte buf[8], FujiFrame ff) {
-  Serial.printf("%X %X %X %X %X %X %X %X  ", buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
-  Serial.printf(" mSrc: %d mDst: %d mType: %d write: %d login: %d unknown: %d onOff: %d temp: %d, mode: %d cP:%d uM:%d cTemp:%d acError:%d \n", 
+Print& FujiHeatPump::getDebugOutput() {
+    return debugOutput != nullptr ? *debugOutput : Serial;
+}
+
+void FujiHeatPump::printFrame(Print& output, byte buf[8], FujiFrame ff) {
+  output.printf("%X %X %X %X %X %X %X %X  ", buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
+  output.printf(" mSrc: %d mDst: %d mType: %d write: %d login: %d unknown: %d onOff: %d temp: %d, mode: %d cP:%d uM:%d cTemp:%d acError:%d \n", 
     ff.messageSource, ff.messageDest, ff.messageType, ff.writeBit, ff.loginBit, ff.unknownBit, ff.onOff, ff.temperature, ff.acMode, ff.controllerPresent, ff.updateMagic, ff.controllerTemp, ff.acError);
 
 }
@@ -137,9 +145,16 @@ bool FujiHeatPump::waitForFrame() {
     
         ff = decodeFrame();
 
+        if(ff.messageSource == static_cast<byte>(FujiAddress::PRIMARY)) {
+            seenPrimaryController = true;
+        } else if(ff.messageSource == static_cast<byte>(FujiAddress::SECONDARY)) {
+            seenSecondaryController = true;
+        }
+
         if(debugPrint) {
-            Serial.printf("--> ");
-            printFrame(readBuf, ff);
+            Print& output = getDebugOutput();
+            output.print("--> ");
+            printFrame(output, readBuf, ff);
         }
         
         if(ff.messageDest == controllerAddress) {
@@ -275,8 +290,9 @@ bool FujiHeatPump::waitForFrame() {
                     ff.acError           = 0;
                 }
             } else if(ff.messageType == static_cast<byte>(FujiMessageType::ERROR)) {
-                Serial.printf("AC ERROR RECV: ");
-                printFrame(readBuf, ff);
+                Print& output = getDebugOutput();
+                output.print("AC ERROR RECV: ");
+                printFrame(output, readBuf, ff);
                 // handle errors here
                 return false;
             }
@@ -284,8 +300,9 @@ bool FujiHeatPump::waitForFrame() {
             encodeFrame(ff);
 
             if(debugPrint) {
-                Serial.printf("<-- ");
-                printFrame(writeBuf, ff);
+                Print& output = getDebugOutput();
+                output.print("<-- ");
+                printFrame(output, writeBuf, ff);
             }
 
             for(int i=0;i<8;i++) {
@@ -320,6 +337,38 @@ bool FujiHeatPump::updatePending() {
     return false;
 }
 
+bool FujiHeatPump::hasReceivedFrame() {
+    return lastFrameReceived != 0;
+}
+
+unsigned long FujiHeatPump::getLastFrameAgeMs() {
+    if(!hasReceivedFrame()) {
+        return 0;
+    }
+
+    return millis() - lastFrameReceived;
+}
+
+bool FujiHeatPump::hasSeenPrimaryController() {
+    return seenPrimaryController;
+}
+
+bool FujiHeatPump::hasSeenSecondaryController() {
+    return seenSecondaryController;
+}
+
+bool FujiHeatPump::isPrimaryController() {
+    return controllerIsPrimary;
+}
+
+byte FujiHeatPump::getControllerAddress() {
+    return controllerAddress;
+}
+
+bool FujiHeatPump::hasPendingFrame() {
+    return pendingFrame;
+}
+
 void FujiHeatPump::setOnOff(bool o){
     updateFields |= kOnOffUpdateMask;
     updateState.onOff = o ? 1 : 0;   
@@ -351,6 +400,24 @@ void FujiHeatPump::setSwingStep(byte ss){
 
 void FujiHeatPump::setDebug(bool isOn) {
     debugPrint = isOn;
+}
+
+void FujiHeatPump::setDebugOutput(Print* output) {
+    debugOutput = output;
+}
+
+void FujiHeatPump::setControllerRole(bool primary) {
+    controllerIsPrimary = primary;
+    controllerAddress = primary
+        ? static_cast<byte>(FujiAddress::PRIMARY)
+        : static_cast<byte>(FujiAddress::SECONDARY);
+
+    // Role switch changes our bus identity, so old handshake/update state is stale.
+    seenPrimaryController = false;
+    seenSecondaryController = false;
+    lastFrameReceived = 0;
+    updateFields = 0;
+    pendingFrame = false;
 }
 
 bool FujiHeatPump::getOnOff(){

@@ -48,8 +48,15 @@ void App::update() {
     }
 
     console.update();
+    updateHeatPump();
     updateIoExpanderInputs();
     tempSensors.update();
+}
+
+
+void App::updateHeatPump() {
+    hp.waitForFrame();
+    hp.sendPendingFrame();
 }
 
 
@@ -146,4 +153,3 @@ void App::handleIoExpanderInputChange(uint8_t pin, int currentState) {
         currentState == LOW ? "LOW (grounded)" : "HIGH (pull-up)"
     );
 }
-

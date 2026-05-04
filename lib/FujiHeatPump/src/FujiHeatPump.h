@@ -79,9 +79,11 @@ class FujiHeatPump {
     //byte            isStarted = false;  // When AC starts, PRIMARY will send 2 data packets: 1 to AC and 1 to SECONDARY
     byte            controllerAddress;  
     bool            controllerIsPrimary = true;  
+    bool            seenPrimaryController = false;
     bool            seenSecondaryController = false;  
     bool            controllerLoggedIn = false; 
     unsigned long   lastFrameReceived;
+    Print*          debugOutput = nullptr;
     
     byte            updateFields;
     FujiFrame       updateState;
@@ -89,7 +91,8 @@ class FujiHeatPump {
 
     FujiFrame decodeFrame();
     void encodeFrame(FujiFrame ff);
-    void printFrame(byte buf[8], FujiFrame ff);
+    Print& getDebugOutput();
+    void printFrame(Print& output, byte buf[8], FujiFrame ff);
     
     bool pendingFrame = false;
   public:
@@ -100,6 +103,13 @@ class FujiHeatPump {
     void sendPendingFrame();
     bool isBound();
     bool updatePending();
+    bool hasReceivedFrame();
+    unsigned long getLastFrameAgeMs();
+    bool hasSeenPrimaryController();
+    bool hasSeenSecondaryController();
+    bool isPrimaryController();
+    byte getControllerAddress();
+    bool hasPendingFrame();
     
     void setOnOff(bool o);
     void setTemp(byte t);
@@ -109,6 +119,8 @@ class FujiHeatPump {
     void setSwingMode(byte sm);
     void setSwingStep(byte ss);
     void setDebug(bool isOn);
+    void setDebugOutput(Print* output);
+    void setControllerRole(bool primary);
     
     bool getOnOff();
     byte getTemp();
