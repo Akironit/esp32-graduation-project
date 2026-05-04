@@ -18,6 +18,8 @@ void App::begin() {
     vfd.begin(Serial2, RS485_RX2_PIN, RS485_TX2_PIN, RS485_BAUD, SERIAL_8E1);
 
     tempSensors.begin(TEMP_ONE_WIRE_PIN);
+
+    ioExpander.begin(Wire, MCP23017_ADDRESS, I2C_SDA_PIN, I2C_SCL_PIN);
 }
 
 

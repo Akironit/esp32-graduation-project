@@ -8,6 +8,7 @@
 #include "SerialConsole.h"
 #include "VfdController.h"
 #include "TemperatureSensors.h"
+#include "Mcp23017Expander.h"
 
 // -=-=-=-=-= Pin definitions and settings -=-=-=-=-=-
 // AC LIN bus (Serial1)
@@ -25,6 +26,11 @@
 
 #define TEMP_ONE_WIRE_PIN 4
 
+// I2C bus
+#define I2C_SDA_PIN 21
+#define I2C_SCL_PIN 22
+#define MCP23017_ADDRESS 0x20
+
 
 class App {
 public:
@@ -36,6 +42,7 @@ private:
     SerialConsole console;
     VfdController vfd{RS485_DERE_PIN};
     TemperatureSensors tempSensors;
+    Mcp23017Expander ioExpander;
     NetworkManager network{
         WIFI_SSID,
         WIFI_PASSWORD,
