@@ -121,27 +121,66 @@ void FujiHeatPump::sendPendingFrame() {
         _serial->flush();
         pendingFrame = false;
         updateFields = 0;
+        frameSyncCount = 0;
 
         _serial->readBytes(writeBuf, 8); // read back our own frame so we dont process it again
     }
 }
 
+bool FujiHeatPump::readNextFrame() {
+    while(_serial->available()) {
+        frameSyncBuf[frameSyncCount] = ((byte)_serial->read()) ^ 0xFF;
+
+        if(frameSyncCount < 7) {
+            frameSyncCount++;
+            continue;
+        }
+
+        memcpy(readBuf, frameSyncBuf, 8);
+
+        if(isPlausibleFrame(readBuf)) {
+            frameSyncCount = 0;
+            return true;
+        }
+
+        memmove(frameSyncBuf, frameSyncBuf + 1, 7);
+        frameSyncCount = 7;
+    }
+
+    return false;
+}
+
+bool FujiHeatPump::isKnownAddress(byte address) {
+    return address == static_cast<byte>(FujiAddress::START)
+        || address == static_cast<byte>(FujiAddress::UNIT)
+        || address == static_cast<byte>(FujiAddress::PRIMARY)
+        || address == static_cast<byte>(FujiAddress::SECONDARY);
+}
+
+bool FujiHeatPump::isPlausibleFrame(byte buf[8]) {
+    const byte source = buf[0];
+    const byte dest = buf[1] & 0b01111111;
+    const byte messageType = (buf[2] & 0b00110000) >> 4;
+
+    if(!isKnownAddress(source) || !isKnownAddress(dest)) {
+        return false;
+    }
+
+    if(source == static_cast<byte>(FujiAddress::START) && dest == static_cast<byte>(FujiAddress::START)) {
+        return false;
+    }
+
+    if(source == dest) {
+        return false;
+    }
+
+    return messageType <= static_cast<byte>(FujiMessageType::UNKNOWN);
+}
+
 bool FujiHeatPump::waitForFrame() {
     FujiFrame ff;
     
-    if(_serial->available()) {
-
-        memset(readBuf, 0, 8);
-        int bytesRead = _serial->readBytes(readBuf,8);
-
-        if(bytesRead < 8) {
-            // skip incomplete frame
-            return false;
-        }
-        
-        for(int i=0;i<8;i++) {
-            readBuf[i] ^= 0xFF;
-        }
+    if(readNextFrame()) {
     
         ff = decodeFrame();
 
@@ -324,7 +363,7 @@ bool FujiHeatPump::waitForFrame() {
 }
 
 bool FujiHeatPump::isBound() {
-    if(millis() - lastFrameReceived < 1000) {
+    if(hasReceivedFrame() && millis() - lastFrameReceived < kBoundTimeoutMs) {
         return true;
     }
     return false;

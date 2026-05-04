@@ -50,7 +50,7 @@ void SerialConsole::begin(FujiHeatPump* hp, VfdController* vfd, TemperatureSenso
     this->temp = temp;
 
     if (this->hp != nullptr) {
-        this->hp->setDebugOutput(&consoleOutput);
+        this->hp->setDebugOutput(&Serial);
     }
 
     Serial.begin(115200);

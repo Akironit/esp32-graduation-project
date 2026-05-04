@@ -41,16 +41,24 @@ void App::begin() {
 
 
 void App::update() {
+    updateHeatPump();
+
     network.update();
+    updateHeatPump();
 
     if (network.isConnected()) {
         console.startTelnet();
     }
+    updateHeatPump();
 
     console.update();
     updateHeatPump();
+
     updateIoExpanderInputs();
+    updateHeatPump();
+
     tempSensors.update();
+    updateHeatPump();
 }
 
 

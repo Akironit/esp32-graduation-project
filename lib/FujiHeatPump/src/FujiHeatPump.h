@@ -47,6 +47,8 @@ const byte kControllerTempIndex = 6;
 const byte kControllerTempMask = 0b01111110;
 const byte kControllerTempOffset = 1;
 
+const unsigned long kBoundTimeoutMs = 3000;
+
 
 typedef struct FujiFrames  {
     byte onOff = 0;
@@ -75,6 +77,8 @@ class FujiHeatPump {
     HardwareSerial *_serial;
     byte            readBuf[8];
     byte            writeBuf[8];
+    byte            frameSyncBuf[8];
+    byte            frameSyncCount = 0;
     
     //byte            isStarted = false;  // When AC starts, PRIMARY will send 2 data packets: 1 to AC and 1 to SECONDARY
     byte            controllerAddress;  
@@ -91,6 +95,9 @@ class FujiHeatPump {
 
     FujiFrame decodeFrame();
     void encodeFrame(FujiFrame ff);
+    bool readNextFrame();
+    bool isKnownAddress(byte address);
+    bool isPlausibleFrame(byte buf[8]);
     Print& getDebugOutput();
     void printFrame(Print& output, byte buf[8], FujiFrame ff);
     

@@ -12,11 +12,11 @@
 
 // -=-=-=-=-= Pin definitions and settings -=-=-=-=-=-
 // AC LIN bus (Serial1)
-#define AC_LIN_TX1_PIN  16
-#define AC_LIN_RX1_PIN  17
+#define AC_LIN_RX1_PIN  16
+#define AC_LIN_TX1_PIN  17
 #define AC_RESET_PIN    36
 #define IS_SECONDARY_CONTROLLER true
-#define AC_DEBUG true
+#define AC_DEBUG false
 
 // VFD RS485 bus (Serial2)
 #define RS485_TX2_PIN   32
