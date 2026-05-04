@@ -23,6 +23,7 @@ public:
 
     static void raw(const char* message);
     static void rawf(const char* format, ...);
+    static void replay(Print& target);
 
     static void errorf(const char* tag, const char* format, ...);
     static void warningf(const char* tag, const char* format, ...);
@@ -31,12 +32,19 @@ public:
     static void tracef(const char* tag, const char* format, ...);
 
 private:
+    static constexpr uint8_t HISTORY_CAPACITY = 24;
+    static constexpr size_t HISTORY_LINE_LENGTH = 192;
+
     static Print* output;
     static LogLevel currentLevel;
+    static char history[HISTORY_CAPACITY][HISTORY_LINE_LENGTH];
+    static uint8_t historyHead;
+    static uint8_t historyCount;
 
     static bool shouldLog(LogLevel level);
     static const char* levelName(LogLevel level);
     static void writeTimestamp();
     static void write(LogLevel level, const char* tag, const char* message);
     static void writef(LogLevel level, const char* tag, const char* format, va_list args);
+    static void storeHistory(const char* line);
 };

@@ -38,6 +38,7 @@ private:
 
     bool telnetStarted = false;
     uint8_t telnetNegotiationBytesToSkip = 0;
+    bool telnetLastOutputWasCarriageReturn = false;
 
     String serialBuffer;
     String telnetBuffer;
@@ -46,10 +47,12 @@ private:
 
     void updateSerialInput();
     void updateTelnet();
+    void sendTelnetNegotiation();
     bool isTelnetCommandByte(uint8_t value);
     void handleInputChar(char c, String& buffer, bool echo, bool& lastInputWasCarriageReturn);
     void handleInputLine(String& buffer, bool echo);
     void printPrompt();
+    void printLogHistory(Print& output);
 
     void processCommand(const String& cmd);
 

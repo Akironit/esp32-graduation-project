@@ -5,6 +5,9 @@
 
 Print* Logger::output = &Serial;
 LogLevel Logger::currentLevel = LogLevel::Info;
+char Logger::history[Logger::HISTORY_CAPACITY][Logger::HISTORY_LINE_LENGTH] = {};
+uint8_t Logger::historyHead = 0;
+uint8_t Logger::historyCount = 0;
 
 void Logger::begin(Print& output) {
     Logger::output = &output;
@@ -54,6 +57,15 @@ void Logger::rawf(const char* format, ...) {
     va_end(args);
 
     output->print(message);
+}
+
+void Logger::replay(Print& target) {
+    const uint8_t firstIndex = (historyHead + HISTORY_CAPACITY - historyCount) % HISTORY_CAPACITY;
+
+    for (uint8_t i = 0; i < historyCount; i++) {
+        const uint8_t index = (firstIndex + i) % HISTORY_CAPACITY;
+        target.println(history[index]);
+    }
 }
 
 void Logger::errorf(const char* tag, const char* format, ...) {
@@ -155,17 +167,42 @@ void Logger::write(LogLevel level, const char* tag, const char* message) {
         return;
     }
 
-    writeTimestamp();
-    output->print("[");
-    output->print(levelName(level));
-    output->print("][");
-    output->print(tag);
-    output->print("]: ");
-    output->println(message);
+    const unsigned long totalMs = millis();
+    const unsigned long totalSeconds = totalMs / 1000;
+    const unsigned int hours = (totalSeconds / 3600) % 100;
+    const unsigned int minutes = (totalSeconds / 60) % 60;
+    const unsigned int seconds = totalSeconds % 60;
+    const unsigned int milliseconds = totalMs % 1000;
+
+    char line[HISTORY_LINE_LENGTH];
+    snprintf(
+        line,
+        sizeof(line),
+        "[%02u:%02u:%02u.%03u][%s][%s]: %s",
+        hours,
+        minutes,
+        seconds,
+        milliseconds,
+        levelName(level),
+        tag,
+        message
+    );
+
+    output->println(line);
+    storeHistory(line);
 }
 
 void Logger::writef(LogLevel level, const char* tag, const char* format, va_list args) {
     char message[160];
     vsnprintf(message, sizeof(message), format, args);
     write(level, tag, message);
+}
+
+void Logger::storeHistory(const char* line) {
+    strlcpy(history[historyHead], line, HISTORY_LINE_LENGTH);
+    historyHead = (historyHead + 1) % HISTORY_CAPACITY;
+
+    if (historyCount < HISTORY_CAPACITY) {
+        historyCount++;
+    }
 }

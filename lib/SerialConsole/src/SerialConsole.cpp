@@ -5,6 +5,12 @@
 
 namespace {
 constexpr const char* TAG_TELNET = "TELNET";
+
+constexpr uint8_t TELNET_IAC = 255;
+constexpr uint8_t TELNET_DO = 253;
+constexpr uint8_t TELNET_WILL = 251;
+constexpr uint8_t TELNET_ECHO = 1;
+constexpr uint8_t TELNET_SUPPRESS_GO_AHEAD = 3;
 }
 
 
@@ -17,7 +23,12 @@ size_t SerialConsole::ConsoleOutput::write(uint8_t value) {
     Serial.write(value);
 
     if (console.telnetClient && console.telnetClient.connected()) {
+        if (value == '\n' && !console.telnetLastOutputWasCarriageReturn) {
+            console.telnetClient.write('\r');
+        }
+
         console.telnetClient.write(value);
+        console.telnetLastOutputWasCarriageReturn = (value == '\r');
     }
 
     return 1;
@@ -25,10 +36,8 @@ size_t SerialConsole::ConsoleOutput::write(uint8_t value) {
 
 
 size_t SerialConsole::ConsoleOutput::write(const uint8_t* buffer, size_t size) {
-    Serial.write(buffer, size);
-
-    if (console.telnetClient && console.telnetClient.connected()) {
-        console.telnetClient.write(buffer, size);
+    for (size_t i = 0; i < size; i++) {
+        write(buffer[i]);
     }
 
     return size;
@@ -138,12 +147,20 @@ void SerialConsole::updateTelnet() {
 
             telnetClient = newClient;
             telnetClient.setNoDelay(true);
+            telnetNegotiationBytesToSkip = 0;
+            telnetLastOutputWasCarriageReturn = false;
+
+            sendTelnetNegotiation();
 
             println();
             println("[TELNET] Client connected");
             println("-=-=-=-=- ESP32 Telnet Console -=-=-=-=-");
             println("Type 'help' for available commands");
             println();
+            telnetClient.println("--- Recent log history ---");
+            Logger::replay(telnetClient);
+            telnetClient.println("--- End log history ---");
+            telnetClient.println();
             printPrompt();
         }
 
@@ -151,9 +168,41 @@ void SerialConsole::updateTelnet() {
     }
 
     while (telnetClient.available()) {
-        char c = (char)telnetClient.read();
+        uint8_t value = (uint8_t)telnetClient.read();
+
+        if (isTelnetCommandByte(value)) {
+            continue;
+        }
+
+        char c = (char)value;
         handleInputChar(c, telnetBuffer, true, telnetLastInputWasCarriageReturn);
     }
+}
+
+
+void SerialConsole::sendTelnetNegotiation() {
+    const uint8_t negotiation[] = {
+        TELNET_IAC, TELNET_WILL, TELNET_ECHO,
+        TELNET_IAC, TELNET_WILL, TELNET_SUPPRESS_GO_AHEAD,
+        TELNET_IAC, TELNET_DO, TELNET_SUPPRESS_GO_AHEAD
+    };
+
+    telnetClient.write(negotiation, sizeof(negotiation));
+}
+
+
+bool SerialConsole::isTelnetCommandByte(uint8_t value) {
+    if (value == TELNET_IAC) {
+        telnetNegotiationBytesToSkip = 2;
+        return true;
+    }
+
+    if (telnetNegotiationBytesToSkip > 0) {
+        telnetNegotiationBytesToSkip--;
+        return true;
+    }
+
+    return false;
 }
 
 
@@ -228,9 +277,30 @@ void SerialConsole::printPrompt() {
 }
 
 
+void SerialConsole::printLogHistory(Print& output) {
+    output.println();
+    output.println("--- Recent log history ---");
+    Logger::replay(output);
+    output.println("--- End log history ---");
+    output.println();
+}
+
+
 void SerialConsole::processCommand(const String& cmd) {
     if (cmd == "help") {
         printHelp();
+        return;
+    }
+
+    if (cmd == "log history") {
+        printLogHistory(consoleOutput);
+        return;
+    }
+
+    if (cmd == "reboot" || cmd == "restart") {
+        println("Rebooting ESP32...");
+        delay(100);
+        ESP.restart();
         return;
     }
 
@@ -470,6 +540,8 @@ void SerialConsole::printAcStatus() {
     println(hp->getFanMode());
     print("Bound: ");
     println(hp->isBound() ? "YES" : "NO");
+    print("Debug: ");
+    println(hp->debugPrint ? "YES" : "NO");
     println("-----------------");
     println();
 }
@@ -491,8 +563,11 @@ void SerialConsole::printHelp() {
     println("vfd stop");
     println("temp status");
     println("temp read");
+    println("log history");
+    println("reboot");
     println();
     println("Type 'ac help', 'vfd help' or 'temp help'");
+    println("Other commands: log history, reboot/restart");
     println("------------------------------");
     println();
 }
