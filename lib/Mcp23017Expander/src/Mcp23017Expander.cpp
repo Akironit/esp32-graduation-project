@@ -7,12 +7,20 @@ constexpr const char* TAG_MCP = "MCP";
 
 constexpr uint8_t REG_IODIRA = 0x00;
 constexpr uint8_t REG_IODIRB = 0x01;
+constexpr uint8_t REG_GPINTENA = 0x04;
+constexpr uint8_t REG_GPINTENB = 0x05;
+constexpr uint8_t REG_INTCONA = 0x08;
+constexpr uint8_t REG_INTCONB = 0x09;
+constexpr uint8_t REG_IOCONA = 0x0A;
+constexpr uint8_t REG_IOCONB = 0x0B;
 constexpr uint8_t REG_GPPUA = 0x0C;
 constexpr uint8_t REG_GPPUB = 0x0D;
 constexpr uint8_t REG_GPIOA = 0x12;
 constexpr uint8_t REG_GPIOB = 0x13;
 constexpr uint8_t REG_OLATA = 0x14;
 constexpr uint8_t REG_OLATB = 0x15;
+
+constexpr uint8_t IOCON_MIRROR = 0x40;
 }
 
 
@@ -37,6 +45,10 @@ bool Mcp23017Expander::begin(
     // Safe default: all pins are inputs, pull-ups are disabled.
     writeRegister(REG_IODIRA, 0xFF);
     writeRegister(REG_IODIRB, 0xFF);
+    writeRegister(REG_GPINTENA, 0x00);
+    writeRegister(REG_GPINTENB, 0x00);
+    writeRegister(REG_INTCONA, 0x00);
+    writeRegister(REG_INTCONB, 0x00);
     writeRegister(REG_GPPUA, 0x00);
     writeRegister(REG_GPPUB, 0x00);
     writeRegister(REG_OLATA, 0x00);
@@ -103,6 +115,49 @@ int Mcp23017Expander::digitalRead(uint8_t pin) {
     }
 
     return (value & (1 << bit)) ? HIGH : LOW;
+}
+
+
+bool Mcp23017Expander::configureInterruptOutputs(bool mirrorPins) {
+    const uint8_t value = mirrorPins ? IOCON_MIRROR : 0x00;
+
+    return writeRegister(REG_IOCONA, value)
+        && writeRegister(REG_IOCONB, value);
+}
+
+
+bool Mcp23017Expander::enableInterruptOnChange(uint8_t pin) {
+    uint8_t regOffset = 0;
+    uint8_t bit = 0;
+
+    if (!splitPin(pin, regOffset, bit)) {
+        return false;
+    }
+
+    // INTCON bit 0 means "compare against previous value", i.e. any change.
+    if (!updateRegisterBit(REG_INTCONA + regOffset, bit, false)) {
+        return false;
+    }
+
+    return updateRegisterBit(REG_GPINTENA + regOffset, bit, true);
+}
+
+
+bool Mcp23017Expander::disableInterrupt(uint8_t pin) {
+    uint8_t regOffset = 0;
+    uint8_t bit = 0;
+
+    if (!splitPin(pin, regOffset, bit)) {
+        return false;
+    }
+
+    return updateRegisterBit(REG_GPINTENA + regOffset, bit, false);
+}
+
+
+bool Mcp23017Expander::clearInterrupts() {
+    uint16_t ignored = 0;
+    return readPort(ignored);
 }
 
 

@@ -19,6 +19,11 @@ public:
     bool digitalWrite(uint8_t pin, uint8_t value);
     int digitalRead(uint8_t pin);
 
+    bool configureInterruptOutputs(bool mirrorPins = false);
+    bool enableInterruptOnChange(uint8_t pin);
+    bool disableInterrupt(uint8_t pin);
+    bool clearInterrupts();
+
     bool writePort(uint16_t value);
     bool readPort(uint16_t& value);
 

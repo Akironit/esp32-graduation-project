@@ -30,6 +30,13 @@
 #define I2C_SDA_PIN 21
 #define I2C_SCL_PIN 22
 #define MCP23017_ADDRESS 0x20
+#define MCP_INT_A_PIN 34
+#define MCP_INT_B_PIN 35
+
+// MCP23017 pins: GPA0-GPA7 are 0-7, GPB0-GPB7 are 8-15.
+#define MCP_PIN_GPA5 5
+#define MCP_PIN_GPA6 6
+#define MCP_PIN_GPA7 7
 
 
 class App {
@@ -38,11 +45,20 @@ public:
     void update();
 
 private:
+    void configureIoExpanderInputs();
+    void updateIoExpanderInputs();
+    void processIoExpanderPort();
+    void handleIoExpanderInputChange(uint8_t pin, int currentState);
+
     FujiHeatPump hp;
     SerialConsole console;
     VfdController vfd{RS485_DERE_PIN};
     TemperatureSensors tempSensors;
     Mcp23017Expander ioExpander;
+    bool ioExpanderReady = false;
+    int lastGpa5State = HIGH;
+    int lastGpa6State = HIGH;
+    int lastGpa7State = HIGH;
     NetworkManager network{
         WIFI_SSID,
         WIFI_PASSWORD,
