@@ -9,6 +9,7 @@
 #include "VfdController.h"
 #include "TemperatureSensors.h"
 #include "DisplayUi.h"
+#include "Logger.h"
 
 
 class SerialConsole {
@@ -62,14 +63,17 @@ private:
     void processVfdCommand(const String& cmd);
     void processTempCommand(const String& cmd);
     void processDisplayCommand(const String& cmd);
+    void processLogCommand(const String& cmd);
 
     void printHelp();
     void printAcHelp();
     void printVfdHelp();
     void printDisplayHelp();
+    void printLogHelp();
     void printAcStatus();
 
     uint16_t parseHexU16(const String& value, bool& ok);
+    bool parseLogLevel(const String& value, LogLevel& level);
 
     void print(const String& value);
     void print(const char* value);

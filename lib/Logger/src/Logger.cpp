@@ -17,6 +17,10 @@ void Logger::setLevel(LogLevel level) {
     currentLevel = level;
 }
 
+LogLevel Logger::getLevel() {
+    return currentLevel;
+}
+
 void Logger::error(const char* tag, const char* message) {
     write(LogLevel::Error, tag, message);
 }

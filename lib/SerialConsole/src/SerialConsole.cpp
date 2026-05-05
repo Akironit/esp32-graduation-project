@@ -302,6 +302,16 @@ void SerialConsole::processCommand(const String& cmd) {
         return;
     }
 
+    if (cmd == "log help") {
+        printLogHelp();
+        return;
+    }
+
+    if (cmd.startsWith("log ")) {
+        processLogCommand(cmd.substring(4));
+        return;
+    }
+
     if (cmd == "reboot" || cmd == "restart") {
         println("Rebooting ESP32...");
         delay(100);
@@ -618,6 +628,45 @@ void SerialConsole::processDisplayCommand(const String& cmd) {
 }
 
 
+void SerialConsole::processLogCommand(const String& cmd) {
+    String args = cmd;
+    args.trim();
+
+    if (args == "level") {
+        print("[LOG] Current level: ");
+        println(Logger::levelName(Logger::getLevel()));
+        return;
+    }
+
+    if (args.startsWith("level ")) {
+        String levelName = args.substring(6);
+        LogLevel level = LogLevel::Info;
+
+        if (!parseLogLevel(levelName, level)) {
+            println("[LOG] Unknown level. Use: error/warning/info/debug/trace");
+            return;
+        }
+
+        Logger::setLevel(level);
+        print("[LOG] Level set to ");
+        println(Logger::levelName(level));
+        return;
+    }
+
+    if (args == "history") {
+        printLogHistory(consoleOutput);
+        return;
+    }
+
+    if (args == "help") {
+        printLogHelp();
+        return;
+    }
+
+    println("[LOG] Unknown log command. Use: log help");
+}
+
+
 void SerialConsole::printAcStatus() {
     if (hp == nullptr) {
         println("Error: heat pump module is not connected to console");
@@ -685,11 +734,12 @@ void SerialConsole::printHelp() {
     println("temp status");
     println("temp read");
     println("display next");
+    println("log level debug");
     println("log history");
     println("reboot");
     println();
-    println("Type 'ac help', 'vfd help', 'temp help' or 'display help'");
-    println("Other commands: log history, reboot/restart");
+    println("Type 'ac help', 'vfd help', 'temp help', 'display help' or 'log help'");
+    println("Other commands: reboot/restart");
     println("------------------------------");
     println();
 }
@@ -745,6 +795,21 @@ void SerialConsole::printDisplayHelp() {
 }
 
 
+void SerialConsole::printLogHelp() {
+    println();
+    println("--- LOG commands ---");
+    println("log level");
+    println("log level error");
+    println("log level warning");
+    println("log level info");
+    println("log level debug");
+    println("log level trace");
+    println("log history");
+    println("--------------------");
+    println();
+}
+
+
 uint16_t SerialConsole::parseHexU16(const String& value, bool& ok) {
     ok = false;
 
@@ -761,6 +826,25 @@ uint16_t SerialConsole::parseHexU16(const String& value, bool& ok) {
 
     ok = true;
     return (uint16_t)parsed;
+}
+
+
+bool SerialConsole::parseLogLevel(const String& value, LogLevel& level) {
+    if (value == "error") {
+        level = LogLevel::Error;
+    } else if (value == "warn" || value == "warning") {
+        level = LogLevel::Warning;
+    } else if (value == "info") {
+        level = LogLevel::Info;
+    } else if (value == "debug") {
+        level = LogLevel::Debug;
+    } else if (value == "trace") {
+        level = LogLevel::Trace;
+    } else {
+        return false;
+    }
+
+    return true;
 }
 
 

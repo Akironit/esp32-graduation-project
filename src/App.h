@@ -10,6 +10,7 @@
 #include "TemperatureSensors.h"
 #include "Mcp23017Expander.h"
 #include "DisplayUi.h"
+#include "ButtonInput.h"
 
 // -=-=-=-=-= Pin definitions and settings -=-=-=-=-=-
 // AC LIN bus (Serial1)
@@ -39,6 +40,12 @@
 #define MCP_PIN_GPA6 6
 #define MCP_PIN_GPA7 7
 
+// UI buttons on MCP23017 port A, active LOW with internal pull-ups.
+#define MCP_BUTTON_BACK_PIN 0
+#define MCP_BUTTON_LEFT_PIN 1
+#define MCP_BUTTON_RIGHT_PIN 2
+#define MCP_BUTTON_OK_PIN 3
+
 
 class App {
 public:
@@ -51,6 +58,7 @@ private:
     void updateIoExpanderInputs();
     void processIoExpanderPort();
     void handleIoExpanderInputChange(uint8_t pin, int currentState);
+    void handleButtonEvent(const char* name, ButtonInput::Event event);
 
     FujiHeatPump hp;
     SerialConsole console;
@@ -62,6 +70,12 @@ private:
     int lastGpa5State = HIGH;
     int lastGpa6State = HIGH;
     int lastGpa7State = HIGH;
+    ButtonInput buttonBack;
+    ButtonInput buttonLeft;
+    ButtonInput buttonRight;
+    ButtonInput buttonOk;
+    bool buttonsActive = false;
+    unsigned long lastButtonPollMs = 0;
     NetworkManager network{
         WIFI_SSID,
         WIFI_PASSWORD,

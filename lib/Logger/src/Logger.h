@@ -14,6 +14,8 @@ class Logger {
 public:
     static void begin(Print& output);
     static void setLevel(LogLevel level);
+    static LogLevel getLevel();
+    static const char* levelName(LogLevel level);
 
     static void error(const char* tag, const char* message);
     static void warning(const char* tag, const char* message);
@@ -42,7 +44,6 @@ private:
     static uint8_t historyCount;
 
     static bool shouldLog(LogLevel level);
-    static const char* levelName(LogLevel level);
     static void writeTimestamp();
     static void write(LogLevel level, const char* tag, const char* message);
     static void writef(LogLevel level, const char* tag, const char* format, va_list args);

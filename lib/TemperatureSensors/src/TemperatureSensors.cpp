@@ -12,13 +12,14 @@ void TemperatureSensors::begin(uint8_t pin) {
     sensors = new DallasTemperature(oneWire);
 
     sensors->begin();
+    sensors->setWaitForConversion(false);
 
     for (uint8_t i = 0; i < TEMP_MAX_SENSORS; i++) {
         temperatures[i] = DEVICE_DISCONNECTED_C;
     }
 
     readAddresses();
-    readTemperatures();
+    requestTemperatureConversion();
 
     Logger::info(TAG_TEMP, "DS18B20 initialized");
     Logger::infof(TAG_TEMP, "Found sensors: %u", sensorCount);
@@ -31,9 +32,17 @@ void TemperatureSensors::update() {
 
     unsigned long now = millis();
 
+    if (conversionPending) {
+        if (now - conversionStartMs >= conversionDelayMs) {
+            readTemperatures();
+        }
+
+        return;
+    }
+
     if (now - lastUpdateMs >= updateIntervalMs) {
         lastUpdateMs = now;
-        readTemperatures();
+        requestTemperatureConversion();
     }
 }
 
@@ -42,7 +51,7 @@ void TemperatureSensors::forceRead() {
         return;
     }
 
-    readTemperatures();
+    requestTemperatureConversion();
 }
 
 void TemperatureSensors::rescan() {
@@ -51,13 +60,14 @@ void TemperatureSensors::rescan() {
     }
 
     sensors->begin();
+    sensors->setWaitForConversion(false);
 
     for (uint8_t i = 0; i < TEMP_MAX_SENSORS; i++) {
         temperatures[i] = DEVICE_DISCONNECTED_C;
     }
 
     readAddresses();
-    readTemperatures();
+    requestTemperatureConversion();
 }
 
 uint8_t TemperatureSensors::getSensorCount() const {
@@ -85,11 +95,21 @@ void TemperatureSensors::readAddresses() {
 }
 
 void TemperatureSensors::readTemperatures() {
-    sensors->requestTemperatures();
-
     for (uint8_t i = 0; i < sensorCount; i++) {
         temperatures[i] = sensors->getTempC(addresses[i]);
     }
+
+    conversionPending = false;
+}
+
+void TemperatureSensors::requestTemperatureConversion() {
+    if (sensors == nullptr) {
+        return;
+    }
+
+    sensors->requestTemperatures();
+    conversionStartMs = millis();
+    conversionPending = true;
 }
 
 void TemperatureSensors::printStatus(Print& output) {

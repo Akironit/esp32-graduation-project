@@ -32,8 +32,12 @@ private:
 
     unsigned long lastUpdateMs = 0;
     const unsigned long updateIntervalMs = UPDATE_INTERVAL_MS;
+    bool conversionPending = false;
+    unsigned long conversionStartMs = 0;
+    const unsigned long conversionDelayMs = 750;
 
     void readAddresses();
     void readTemperatures();
+    void requestTemperatureConversion();
     void printAddress(Print& output, const DeviceAddress& address);
 };

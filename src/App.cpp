@@ -5,6 +5,7 @@
 
 namespace {
 constexpr const char* TAG_INPUT = "INPUT";
+constexpr unsigned long BUTTON_POLL_INTERVAL_MS = 10;
 
 volatile bool mcpInterruptA = false;
 volatile bool mcpInterruptB = false;
@@ -43,14 +44,17 @@ void App::begin() {
 
 void App::update() {
     updateHeatPump();
+    updateIoExpanderInputs();
 
     network.update();
     updateHeatPump();
+    updateIoExpanderInputs();
 
     if (network.isConnected()) {
         console.startTelnet();
     }
     updateHeatPump();
+    updateIoExpanderInputs();
 
     console.update();
     updateHeatPump();
@@ -60,9 +64,11 @@ void App::update() {
 
     tempSensors.update();
     updateHeatPump();
+    updateIoExpanderInputs();
 
     display.update(network.isConnected(), network.getIp(), hp, tempSensors);
     updateHeatPump();
+    updateIoExpanderInputs();
 }
 
 
@@ -82,22 +88,34 @@ void App::configureIoExpanderInputs() {
     ioExpander.pinMode(MCP_PIN_GPA5, INPUT_PULLUP);
     ioExpander.pinMode(MCP_PIN_GPA6, INPUT_PULLUP);
     ioExpander.pinMode(MCP_PIN_GPA7, INPUT_PULLUP);
+    ioExpander.pinMode(MCP_BUTTON_BACK_PIN, INPUT_PULLUP);
+    ioExpander.pinMode(MCP_BUTTON_LEFT_PIN, INPUT_PULLUP);
+    ioExpander.pinMode(MCP_BUTTON_RIGHT_PIN, INPUT_PULLUP);
+    ioExpander.pinMode(MCP_BUTTON_OK_PIN, INPUT_PULLUP);
     ioExpander.configureInterruptOutputs(false);
     ioExpander.enableInterruptOnChange(MCP_PIN_GPA5);
     ioExpander.enableInterruptOnChange(MCP_PIN_GPA6);
     ioExpander.enableInterruptOnChange(MCP_PIN_GPA7);
+    ioExpander.enableInterruptOnChange(MCP_BUTTON_BACK_PIN);
+    ioExpander.enableInterruptOnChange(MCP_BUTTON_LEFT_PIN);
+    ioExpander.enableInterruptOnChange(MCP_BUTTON_RIGHT_PIN);
+    ioExpander.enableInterruptOnChange(MCP_BUTTON_OK_PIN);
     ioExpander.clearInterrupts();
 
     lastGpa5State = ioExpander.digitalRead(MCP_PIN_GPA5);
     lastGpa6State = ioExpander.digitalRead(MCP_PIN_GPA6);
     lastGpa7State = ioExpander.digitalRead(MCP_PIN_GPA7);
+    buttonBack.begin(true, 50, 500);
+    buttonLeft.begin(true, 50, 500);
+    buttonRight.begin(true, 50, 500);
+    buttonOk.begin(true, 50, 500);
 
     pinMode(MCP_INT_A_PIN, INPUT);
     pinMode(MCP_INT_B_PIN, INPUT);
     attachInterrupt(digitalPinToInterrupt(MCP_INT_A_PIN), handleMcpInterruptA, FALLING);
     attachInterrupt(digitalPinToInterrupt(MCP_INT_B_PIN), handleMcpInterruptB, FALLING);
 
-    Logger::info(TAG_INPUT, "GPA5/GPA6/GPA7 interrupt monitor started");
+    Logger::info(TAG_INPUT, "GPA0-GPA3 buttons and GPA5/GPA6/GPA7 interrupt monitor started");
 }
 
 
@@ -106,8 +124,15 @@ void App::updateIoExpanderInputs() {
         return;
     }
 
-    if (!mcpInterruptA && !mcpInterruptB) {
+    const unsigned long now = millis();
+    const bool pollButtons = buttonsActive && now - lastButtonPollMs >= BUTTON_POLL_INTERVAL_MS;
+
+    if (!mcpInterruptA && !mcpInterruptB && !pollButtons) {
         return;
+    }
+
+    if (pollButtons) {
+        lastButtonPollMs = now;
     }
 
     noInterrupts();
@@ -117,13 +142,13 @@ void App::updateIoExpanderInputs() {
     mcpInterruptB = false;
     interrupts();
 
-    if (interruptA) {
-        processIoExpanderPort();
+    if (interruptA || interruptB) {
+        buttonsActive = true;
+        lastButtonPollMs = now;
     }
 
-    if (interruptB) {
-        Logger::info(TAG_INPUT, "MCP23017 INTB triggered");
-        ioExpander.clearInterrupts();
+    if (interruptA || interruptB || pollButtons) {
+        processIoExpanderPort();
     }
 }
 
@@ -154,6 +179,26 @@ void App::processIoExpanderPort() {
         lastGpa7State = gpa7State;
         handleIoExpanderInputChange(MCP_PIN_GPA7, gpa7State);
     }
+
+    const unsigned long now = millis();
+    const bool backPressed = (portState & (1 << MCP_BUTTON_BACK_PIN)) == 0;
+    const bool leftPressed = (portState & (1 << MCP_BUTTON_LEFT_PIN)) == 0;
+    const bool rightPressed = (portState & (1 << MCP_BUTTON_RIGHT_PIN)) == 0;
+    const bool okPressed = (portState & (1 << MCP_BUTTON_OK_PIN)) == 0;
+
+    handleButtonEvent("BACK", buttonBack.update(backPressed, now));
+    handleButtonEvent("LEFT", buttonLeft.update(leftPressed, now));
+    handleButtonEvent("RIGHT", buttonRight.update(rightPressed, now));
+    handleButtonEvent("OK", buttonOk.update(okPressed, now));
+
+    buttonsActive = buttonBack.isPressed()
+        || buttonLeft.isPressed()
+        || buttonRight.isPressed()
+        || buttonOk.isPressed()
+        || buttonBack.isActive()
+        || buttonLeft.isActive()
+        || buttonRight.isActive()
+        || buttonOk.isActive();
 }
 
 
@@ -164,4 +209,35 @@ void App::handleIoExpanderInputChange(uint8_t pin, int currentState) {
         pin,
         currentState == LOW ? "LOW (grounded)" : "HIGH (pull-up)"
     );
+}
+
+
+void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
+    if (event == ButtonInput::Event::None) {
+        return;
+    }
+
+    if (event == ButtonInput::Event::LongPress) {
+        Logger::debugf(TAG_INPUT, "Button %s long press", name);
+
+        if (strcmp(name, "BACK") == 0) {
+            display.setPage(DisplayUi::Page::Overview);
+        } else if (strcmp(name, "OK") == 0) {
+            Logger::debug(TAG_INPUT, "OK long press action is reserved for future menu selection");
+        }
+
+        return;
+    }
+
+    Logger::debugf(TAG_INPUT, "Button %s short press", name);
+
+    if (strcmp(name, "LEFT") == 0) {
+        display.previousPage();
+    } else if (strcmp(name, "RIGHT") == 0) {
+        display.nextPage();
+    } else if (strcmp(name, "BACK") == 0) {
+        display.setPage(DisplayUi::Page::Overview);
+    } else if (strcmp(name, "OK") == 0) {
+        Logger::debug(TAG_INPUT, "OK button action is reserved for future menu selection");
+    }
 }
