@@ -21,7 +21,8 @@ void IRAM_ATTR handleMcpInterruptB() {
 
 
 void App::begin() {
-    console.begin(&hp, &vfd, &tempSensors);
+    console.begin(&hp, &vfd, &tempSensors, &display);
+    display.begin();
 
     network.begin();
 
@@ -58,6 +59,9 @@ void App::update() {
     updateHeatPump();
 
     tempSensors.update();
+    updateHeatPump();
+
+    display.update(network.isConnected(), network.getIp(), hp, tempSensors);
     updateHeatPump();
 }
 

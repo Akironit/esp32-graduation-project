@@ -64,6 +64,14 @@ uint8_t TemperatureSensors::getSensorCount() const {
     return sensorCount;
 }
 
+float TemperatureSensors::getTemperatureC(uint8_t index) const {
+    if (index >= sensorCount) {
+        return DEVICE_DISCONNECTED_C;
+    }
+
+    return temperatures[index];
+}
+
 void TemperatureSensors::readAddresses() {
     sensorCount = sensors->getDeviceCount();
 

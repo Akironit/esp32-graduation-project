@@ -19,6 +19,7 @@ public:
     void rescan();
 
     uint8_t getSensorCount() const;
+    float getTemperatureC(uint8_t index) const;
 
 private:
     OneWire* oneWire = nullptr;

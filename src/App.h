@@ -9,6 +9,7 @@
 #include "VfdController.h"
 #include "TemperatureSensors.h"
 #include "Mcp23017Expander.h"
+#include "DisplayUi.h"
 
 // -=-=-=-=-= Pin definitions and settings -=-=-=-=-=-
 // AC LIN bus (Serial1)
@@ -56,6 +57,7 @@ private:
     VfdController vfd{RS485_DERE_PIN};
     TemperatureSensors tempSensors;
     Mcp23017Expander ioExpander;
+    DisplayUi display;
     bool ioExpanderReady = false;
     int lastGpa5State = HIGH;
     int lastGpa6State = HIGH;

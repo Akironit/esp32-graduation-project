@@ -44,10 +44,11 @@ size_t SerialConsole::ConsoleOutput::write(const uint8_t* buffer, size_t size) {
 }
 
 
-void SerialConsole::begin(FujiHeatPump* hp, VfdController* vfd, TemperatureSensors* temp) {
+void SerialConsole::begin(FujiHeatPump* hp, VfdController* vfd, TemperatureSensors* temp, DisplayUi* display) {
     this->hp = hp;
     this->vfd = vfd;
     this->temp = temp;
+    this->display = display;
 
     if (this->hp != nullptr) {
         this->hp->setDebugOutput(&Serial);
@@ -318,6 +319,11 @@ void SerialConsole::processCommand(const String& cmd) {
         return;
     }
 
+    if (cmd == "display help") {
+        printDisplayHelp();
+        return;
+    }
+
     if (cmd.startsWith("ac ")) {
         processAcCommand(cmd.substring(3));
         return;
@@ -333,7 +339,12 @@ void SerialConsole::processCommand(const String& cmd) {
         return;
     }
 
-    println("Unknown command. Use: ac <cmd>, vfd <cmd>, temp <cmd>");
+    if (cmd.startsWith("display ")) {
+        processDisplayCommand(cmd.substring(8));
+        return;
+    }
+
+    println("Unknown command. Use: ac <cmd>, vfd <cmd>, temp <cmd>, display <cmd>");
     println("Type 'help' for available commands");
 }
 
@@ -553,6 +564,60 @@ void SerialConsole::processVfdCommand(const String& cmd) {
 }
 
 
+void SerialConsole::processDisplayCommand(const String& cmd) {
+    String args = cmd;
+    args.trim();
+
+    if (display == nullptr) {
+        println("[DISPLAY] DisplayUi module is not connected to console");
+        return;
+    }
+
+    if (args == "help") {
+        printDisplayHelp();
+        return;
+    }
+
+    if (args == "next") {
+        display->nextPage();
+        print("[DISPLAY] Page: ");
+        println(display->getPageName());
+        return;
+    }
+
+    if (args == "prev" || args == "previous") {
+        display->previousPage();
+        print("[DISPLAY] Page: ");
+        println(display->getPageName());
+        return;
+    }
+
+    if (args == "status") {
+        print("[DISPLAY] Ready: ");
+        println(display->isReady() ? "YES" : "NO");
+        print("[DISPLAY] Page: ");
+        println(display->getPageName());
+        return;
+    }
+
+    if (args == "overview") {
+        display->setPage(DisplayUi::Page::Overview);
+    } else if (args == "temp" || args == "temperatures") {
+        display->setPage(DisplayUi::Page::Temperatures);
+    } else if (args == "ac") {
+        display->setPage(DisplayUi::Page::AirConditioner);
+    } else if (args == "net" || args == "network") {
+        display->setPage(DisplayUi::Page::Network);
+    } else {
+        println("[DISPLAY] Unknown display command. Use: display help");
+        return;
+    }
+
+    print("[DISPLAY] Page: ");
+    println(display->getPageName());
+}
+
+
 void SerialConsole::printAcStatus() {
     if (hp == nullptr) {
         println("Error: heat pump module is not connected to console");
@@ -608,6 +673,7 @@ void SerialConsole::printHelp() {
     println("ac <command>   - Air conditioner control");
     println("vfd <command>  - Frequency drive control");
     println("temp <command> - Temperature sensors control");
+    println("display <cmd>  - LCD display pages");
     println();
     println("Examples:");
     println("ac on");
@@ -618,10 +684,11 @@ void SerialConsole::printHelp() {
     println("vfd stop");
     println("temp status");
     println("temp read");
+    println("display next");
     println("log history");
     println("reboot");
     println();
-    println("Type 'ac help', 'vfd help' or 'temp help'");
+    println("Type 'ac help', 'vfd help', 'temp help' or 'display help'");
     println("Other commands: log history, reboot/restart");
     println("------------------------------");
     println();
@@ -659,6 +726,21 @@ void SerialConsole::printVfdHelp() {
     println("vfd read 2100 1");
     println("vfd write 2000 0001");
     println("--------------------");
+    println();
+}
+
+
+void SerialConsole::printDisplayHelp() {
+    println();
+    println("--- DISPLAY commands ---");
+    println("display status");
+    println("display next");
+    println("display prev");
+    println("display overview");
+    println("display temp");
+    println("display ac");
+    println("display network");
+    println("------------------------");
     println();
 }
 
