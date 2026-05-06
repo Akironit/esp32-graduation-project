@@ -83,6 +83,7 @@ private:
     ButtonInput buttonOk;
     bool buttonsActive = false;
     unsigned long lastButtonPollMs = 0;
+    uint32_t lastUptimeSecond = UINT32_MAX;
     NetworkManager network{
         WIFI_SSID,
         WIFI_PASSWORD,

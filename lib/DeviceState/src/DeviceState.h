@@ -78,4 +78,9 @@ struct DeviceState {
     HomeAssistantStateSnapshot homeAssistant;
 
     unsigned long uptimeMs = 0;
+    uint32_t uptimeSeconds = 0;
+    uint16_t uptimeHours = 0;
+    uint8_t uptimeMinutes = 0;
+    uint8_t uptimeSecondPart = 0;
+    char uptimeText[16] = "00:00:00";
 };

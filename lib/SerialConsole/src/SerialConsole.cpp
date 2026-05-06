@@ -808,8 +808,10 @@ void SerialConsole::printStateStatus() {
     println();
     println("--- DEVICE STATE ---");
     print("Uptime: ");
+    print(state->uptimeText);
+    print(" (");
     print(String(state->uptimeMs));
-    println(" ms");
+    println(" ms)");
     print("Wi-Fi: ");
     println(state->wifiConnected ? "CONNECTED" : "DISCONNECTED");
     print("IP: ");

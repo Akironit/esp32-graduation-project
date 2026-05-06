@@ -27,7 +27,7 @@
 
 // How often ESP32 publishes DeviceState values to MQTT.
 #ifndef HA_PUBLISH_INTERVAL_MS
-#define HA_PUBLISH_INTERVAL_MS 5000UL
+#define HA_PUBLISH_INTERVAL_MS 3000UL
 #endif
 
 // How often ESP32 retries MQTT connection when broker is unavailable.
@@ -90,6 +90,7 @@ private:
     void publishSensorDiscovery(
         const char* objectId,
         const char* name,
+        const char* entityObjectId,
         const char* stateSuffix,
         const char* deviceClass = nullptr,
         const char* unit = nullptr,
@@ -98,6 +99,7 @@ private:
     void publishBinarySensorDiscovery(
         const char* objectId,
         const char* name,
+        const char* entityObjectId,
         const char* stateSuffix,
         const char* deviceClass = nullptr,
         const char* payloadOn = "ON",
@@ -106,12 +108,14 @@ private:
     void publishSwitchDiscovery(
         const char* objectId,
         const char* name,
+        const char* entityObjectId,
         const char* stateSuffix,
         const char* commandSuffix
     );
     void publishNumberDiscovery(
         const char* objectId,
         const char* name,
+        const char* entityObjectId,
         const char* stateSuffix,
         const char* commandSuffix,
         int min,
@@ -122,6 +126,7 @@ private:
     void publishSelectDiscovery(
         const char* objectId,
         const char* name,
+        const char* entityObjectId,
         const char* stateSuffix,
         const char* commandSuffix,
         const char* optionsJson
@@ -133,6 +138,12 @@ private:
     void subscribeCommands();
     void handleMessage(char* topic, byte* payload, unsigned int length);
     void handleCommand(const String& suffix, const String& payload);
+    const char* acModeName(uint8_t mode) const;
+    uint8_t acModeValue(const String& mode) const;
+    const char* acFanName(uint8_t fanMode) const;
+    uint8_t acFanValue(const String& fanMode) const;
+    const char* displayPageName(uint8_t pageIndex) const;
+    const char* vfdRunState(const char* lastAction) const;
     String topicSuffix(const char* topic) const;
     String payloadToString(byte* payload, unsigned int length) const;
     String commandTopic(const char* suffix) const;

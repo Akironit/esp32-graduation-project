@@ -100,6 +100,24 @@ void App::updateHeatPump() {
 
 void App::updateDeviceState() {
     state.uptimeMs = millis();
+    const uint32_t uptimeSeconds = state.uptimeMs / 1000UL;
+
+    if (uptimeSeconds != lastUptimeSecond) {
+        lastUptimeSecond = uptimeSeconds;
+        state.uptimeSeconds = uptimeSeconds;
+        state.uptimeHours = uptimeSeconds / 3600UL;
+        state.uptimeMinutes = (uptimeSeconds / 60UL) % 60UL;
+        state.uptimeSecondPart = uptimeSeconds % 60UL;
+        snprintf(
+            state.uptimeText,
+            sizeof(state.uptimeText),
+            "%02u:%02u:%02u",
+            state.uptimeHours,
+            state.uptimeMinutes,
+            state.uptimeSecondPart
+        );
+    }
+
     state.wifiConnected = network.isConnected();
     state.ip = network.getIp();
 

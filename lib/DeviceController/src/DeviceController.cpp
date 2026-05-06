@@ -118,7 +118,7 @@ bool DeviceController::vfdStop() {
 }
 
 bool DeviceController::vfdSetFrequency(float hz) {
-    if (vfd == nullptr || hz < 0.0f) {
+    if (vfd == nullptr || hz < 20.0f || hz > 50.0f) {
         Logger::warningf(TAG_ACTION, "VFD frequency command rejected: value=%.2f", hz);
         return false;
     }

@@ -143,13 +143,14 @@ void HomeAssistantBridge::publishState() {
 
     publishTopic("state/wifi", state->wifiConnected ? "online" : "offline", true);
     publishTopic("state/ip", state->ip.toString().c_str(), true);
+    publishTopic("state/uptime", state->uptimeText, true);
     publishTopicf("state/uptime_ms", "%lu", state->uptimeMs);
 
     publishTopic("state/ac/power", state->ac.powerOn ? "ON" : "OFF", true);
     publishTopic("state/ac/bound", state->ac.bound ? "ON" : "OFF", true);
     publishTopicf("state/ac/temp", "%u", state->ac.temperature);
-    publishTopicf("state/ac/mode", "%u", state->ac.mode);
-    publishTopicf("state/ac/fan", "%u", state->ac.fanMode);
+    publishTopic("state/ac/mode", acModeName(state->ac.mode), true);
+    publishTopic("state/ac/fan", acFanName(state->ac.fanMode), true);
     publishTopic("state/ac/role", state->ac.primaryController ? "primary" : "secondary", true);
 
     publishTopicf("state/temp/count", "%u", state->temperatures.sensorCount);
@@ -161,11 +162,12 @@ void HomeAssistantBridge::publishState() {
     }
 
     publishTopic("state/vfd/last_action", state->vfd.lastAction, true);
+    publishTopic("state/vfd/run", vfdRunState(state->vfd.lastAction), true);
     publishTopicf("state/vfd/requested_frequency", "%.2f", state->vfd.requestedFrequencyHz);
     publishTopicf("state/vfd/requests", "%lu", (unsigned long)state->vfd.requestCount);
     publishTopicf("state/vfd/errors", "%lu", (unsigned long)state->vfd.errorCount);
 
-    publishTopic("state/display/page", state->display.pageName, true);
+    publishTopic("state/display/page", displayPageName(state->display.pageIndex), true);
 }
 
 void HomeAssistantBridge::publishAvailability(bool online) {
@@ -177,39 +179,43 @@ void HomeAssistantBridge::publishDiscovery() {
         return;
     }
 
-    publishSensorDiscovery("ip", "IP address", "state/ip");
-    publishSensorDiscovery("uptime", "Uptime", "state/uptime_ms", "duration", "ms", "measurement");
-    publishBinarySensorDiscovery("wifi", "Wi-Fi", "state/wifi", "connectivity", "online", "offline");
+    publishSensorDiscovery("ip", "IP address", "climate_controller_ip", "state/ip");
+    publishSensorDiscovery("uptime", "Uptime", "climate_controller_uptime", "state/uptime");
+    publishSensorDiscovery("uptime_ms", "Uptime milliseconds", "climate_controller_uptime_ms", "state/uptime_ms", "duration", "ms", "measurement");
+    publishBinarySensorDiscovery("wifi", "Wi-Fi", "climate_controller_wifi", "state/wifi", "connectivity", "online", "offline");
 
-    publishSwitchDiscovery("ac_power", "AC power", "state/ac/power", "cmd/ac/power");
-    publishBinarySensorDiscovery("ac_bound", "AC bound", "state/ac/bound", "connectivity");
-    publishNumberDiscovery("ac_temp", "AC temperature", "state/ac/temp", "cmd/ac/temp", 16, 30, 1, "C");
-    publishNumberDiscovery("ac_fan", "AC fan", "state/ac/fan", "cmd/ac/fan", 0, 4, 1);
-    publishSelectDiscovery("ac_mode", "AC mode", "state/ac/mode", "cmd/ac/mode", "[\"1\",\"2\",\"3\",\"4\",\"5\"]");
-    publishSensorDiscovery("ac_role", "AC role", "state/ac/role");
+    publishSwitchDiscovery("ac_power", "AC power", "climate_controller_ac_power", "state/ac/power", "cmd/ac/power");
+    publishBinarySensorDiscovery("ac_bound", "AC bound", "climate_controller_ac_bound", "state/ac/bound", "connectivity");
+    publishNumberDiscovery("ac_temp", "AC temperature", "climate_controller_ac_temperature", "state/ac/temp", "cmd/ac/temp", 16, 30, 1, "C");
+    publishSelectDiscovery("ac_fan", "AC fan", "climate_controller_ac_fan", "state/ac/fan", "cmd/ac/fan", "[\"auto\",\"low\",\"medium\",\"high\",\"max\"]");
+    publishSelectDiscovery("ac_mode", "AC mode", "climate_controller_ac_mode", "state/ac/mode", "cmd/ac/mode", "[\"unknown\",\"fan\",\"dry\",\"cool\",\"heat\",\"auto\"]");
+    publishSensorDiscovery("ac_role", "AC role", "climate_controller_ac_role", "state/ac/role");
 
-    publishSensorDiscovery("temperature_count", "Temperature sensor count", "state/temp/count");
+    publishSensorDiscovery("temperature_count", "Temperature sensor count", "climate_controller_temperature_count", "state/temp/count");
 
     for (uint8_t i = 0; i < state->temperatures.sensorCount && i < TEMP_MAX_SENSORS; i++) {
         char objectId[32];
         char name[48];
+        char entityObjectId[48];
         char suffix[32];
         snprintf(objectId, sizeof(objectId), "temperature_%u", i);
         snprintf(name, sizeof(name), "Temperature %u", i);
+        snprintf(entityObjectId, sizeof(entityObjectId), "climate_controller_temperature_%u", i);
         snprintf(suffix, sizeof(suffix), "state/temp/%u", i);
-        publishSensorDiscovery(objectId, name, suffix, "temperature", "C", "measurement");
+        publishSensorDiscovery(objectId, name, entityObjectId, suffix, "temperature", "C", "measurement");
     }
 
-    publishSensorDiscovery("vfd_last_action", "VFD last action", "state/vfd/last_action");
-    publishSensorDiscovery("vfd_requested_frequency", "VFD requested frequency", "state/vfd/requested_frequency", nullptr, "Hz", "measurement");
-    publishSensorDiscovery("vfd_requests", "VFD requests", "state/vfd/requests", nullptr, nullptr, "total_increasing");
-    publishSensorDiscovery("vfd_errors", "VFD errors", "state/vfd/errors", nullptr, nullptr, "total_increasing");
-    publishNumberDiscovery("vfd_frequency", "VFD frequency command", "state/vfd/requested_frequency", "cmd/vfd/hz", 0, 50, 1, "Hz");
-    publishSelectDiscovery("vfd_run", "VFD run command", "state/vfd/last_action", "cmd/vfd/run", "[\"fwd\",\"rev\",\"stop\"]");
+    publishSensorDiscovery("vfd_last_action", "VFD last action", "climate_controller_vfd_last_action", "state/vfd/last_action");
+    publishSensorDiscovery("vfd_requested_frequency", "VFD requested frequency", "climate_controller_vfd_requested_frequency", "state/vfd/requested_frequency", nullptr, "Hz", "measurement");
+    publishSensorDiscovery("vfd_requests", "VFD requests", "climate_controller_vfd_requests", "state/vfd/requests", nullptr, nullptr, "total_increasing");
+    publishSensorDiscovery("vfd_errors", "VFD errors", "climate_controller_vfd_errors", "state/vfd/errors", nullptr, nullptr, "total_increasing");
+    publishNumberDiscovery("vfd_frequency", "VFD frequency command", "climate_controller_vfd_frequency", "state/vfd/requested_frequency", "cmd/vfd/hz", 20, 50, 1, "Hz");
+    publishSelectDiscovery("vfd_run", "VFD run command", "climate_controller_vfd_run", "state/vfd/run", "cmd/vfd/run", "[\"unknown\",\"fwd\",\"rev\",\"stop\"]");
 
     publishSelectDiscovery(
         "display_page",
         "Display page",
+        "climate_controller_display_page",
         "state/display/page",
         "cmd/display/page",
         "[\"overview\",\"temp\",\"ac\",\"network\",\"next\",\"prev\"]"
@@ -222,6 +228,7 @@ void HomeAssistantBridge::publishDiscovery() {
 void HomeAssistantBridge::publishSensorDiscovery(
     const char* objectId,
     const char* name,
+    const char* entityObjectId,
     const char* stateSuffix,
     const char* deviceClass,
     const char* unit,
@@ -234,8 +241,9 @@ void HomeAssistantBridge::publishSensorDiscovery(
     snprintf(
         payload,
         sizeof(payload),
-        "{\"name\":\"%s\",\"unique_id\":\"%s_%s\",\"state_topic\":\"%s/%s\",\"availability_topic\":\"%s/status\",\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\"}%s%s%s}",
+        "{\"name\":\"%s\",\"object_id\":\"%s\",\"unique_id\":\"%s_%s\",\"has_entity_name\":true,\"state_topic\":\"%s/%s\",\"availability_topic\":\"%s/status\",\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\"}%s%s%s}",
         name,
+        entityObjectId,
         baseTopic,
         objectId,
         baseTopic,
@@ -266,6 +274,7 @@ void HomeAssistantBridge::publishSensorDiscovery(
 void HomeAssistantBridge::publishBinarySensorDiscovery(
     const char* objectId,
     const char* name,
+    const char* entityObjectId,
     const char* stateSuffix,
     const char* deviceClass,
     const char* payloadOn,
@@ -278,8 +287,9 @@ void HomeAssistantBridge::publishBinarySensorDiscovery(
     snprintf(
         payload,
         sizeof(payload),
-        "{\"name\":\"%s\",\"unique_id\":\"%s_%s\",\"state_topic\":\"%s/%s\",\"availability_topic\":\"%s/status\",\"payload_on\":\"%s\",\"payload_off\":\"%s\",\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\"}%s%s%s}",
+        "{\"name\":\"%s\",\"object_id\":\"%s\",\"unique_id\":\"%s_%s\",\"has_entity_name\":true,\"state_topic\":\"%s/%s\",\"availability_topic\":\"%s/status\",\"payload_on\":\"%s\",\"payload_off\":\"%s\",\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\"}%s%s%s}",
         name,
+        entityObjectId,
         baseTopic,
         objectId,
         baseTopic,
@@ -302,6 +312,7 @@ void HomeAssistantBridge::publishBinarySensorDiscovery(
 void HomeAssistantBridge::publishSwitchDiscovery(
     const char* objectId,
     const char* name,
+    const char* entityObjectId,
     const char* stateSuffix,
     const char* commandSuffix
 ) {
@@ -312,8 +323,9 @@ void HomeAssistantBridge::publishSwitchDiscovery(
     snprintf(
         payload,
         sizeof(payload),
-        "{\"name\":\"%s\",\"unique_id\":\"%s_%s\",\"state_topic\":\"%s/%s\",\"command_topic\":\"%s/%s\",\"availability_topic\":\"%s/status\",\"payload_on\":\"ON\",\"payload_off\":\"OFF\",\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\"}}",
+        "{\"name\":\"%s\",\"object_id\":\"%s\",\"unique_id\":\"%s_%s\",\"has_entity_name\":true,\"state_topic\":\"%s/%s\",\"command_topic\":\"%s/%s\",\"availability_topic\":\"%s/status\",\"payload_on\":\"ON\",\"payload_off\":\"OFF\",\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\"}}",
         name,
+        entityObjectId,
         baseTopic,
         objectId,
         baseTopic,
@@ -333,6 +345,7 @@ void HomeAssistantBridge::publishSwitchDiscovery(
 void HomeAssistantBridge::publishNumberDiscovery(
     const char* objectId,
     const char* name,
+    const char* entityObjectId,
     const char* stateSuffix,
     const char* commandSuffix,
     int min,
@@ -347,8 +360,9 @@ void HomeAssistantBridge::publishNumberDiscovery(
     snprintf(
         payload,
         sizeof(payload),
-        "{\"name\":\"%s\",\"unique_id\":\"%s_%s\",\"state_topic\":\"%s/%s\",\"command_topic\":\"%s/%s\",\"availability_topic\":\"%s/status\",\"min\":%d,\"max\":%d,\"step\":%d,\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\"}%s%s%s}",
+        "{\"name\":\"%s\",\"object_id\":\"%s\",\"unique_id\":\"%s_%s\",\"has_entity_name\":true,\"state_topic\":\"%s/%s\",\"command_topic\":\"%s/%s\",\"availability_topic\":\"%s/status\",\"min\":%d,\"max\":%d,\"step\":%d,\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\"}%s%s%s}",
         name,
+        entityObjectId,
         baseTopic,
         objectId,
         baseTopic,
@@ -374,6 +388,7 @@ void HomeAssistantBridge::publishNumberDiscovery(
 void HomeAssistantBridge::publishSelectDiscovery(
     const char* objectId,
     const char* name,
+    const char* entityObjectId,
     const char* stateSuffix,
     const char* commandSuffix,
     const char* optionsJson
@@ -385,8 +400,9 @@ void HomeAssistantBridge::publishSelectDiscovery(
     snprintf(
         payload,
         sizeof(payload),
-        "{\"name\":\"%s\",\"unique_id\":\"%s_%s\",\"state_topic\":\"%s/%s\",\"command_topic\":\"%s/%s\",\"availability_topic\":\"%s/status\",\"options\":%s,\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\"}}",
+        "{\"name\":\"%s\",\"object_id\":\"%s\",\"unique_id\":\"%s_%s\",\"has_entity_name\":true,\"state_topic\":\"%s/%s\",\"command_topic\":\"%s/%s\",\"availability_topic\":\"%s/status\",\"options\":%s,\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\"}}",
         name,
+        entityObjectId,
         baseTopic,
         objectId,
         baseTopic,
@@ -470,9 +486,9 @@ void HomeAssistantBridge::handleCommand(const String& suffix, const String& payl
     } else if (suffix == "ac/temp") {
         controller->setAcTemperature((uint8_t)payload.toInt());
     } else if (suffix == "ac/mode") {
-        controller->setAcMode((uint8_t)payload.toInt());
+        controller->setAcMode(acModeValue(payload));
     } else if (suffix == "ac/fan") {
-        controller->setAcFanMode((uint8_t)payload.toInt());
+        controller->setAcFanMode(acFanValue(payload));
     } else if (suffix == "ac/debug") {
         controller->setAcDebug(payload == "ON" || payload == "on" || payload == "1");
     } else if (suffix == "display/page") {
@@ -500,6 +516,109 @@ void HomeAssistantBridge::handleCommand(const String& suffix, const String& payl
     } else if (suffix == "vfd/hz") {
         controller->vfdSetFrequency(payload.toFloat());
     }
+}
+
+const char* HomeAssistantBridge::acModeName(uint8_t mode) const {
+    switch (mode) {
+        case 1:
+            return "fan";
+        case 2:
+            return "dry";
+        case 3:
+            return "cool";
+        case 4:
+            return "heat";
+        case 5:
+            return "auto";
+        default:
+            return "unknown";
+    }
+}
+
+uint8_t HomeAssistantBridge::acModeValue(const String& mode) const {
+    if (mode == "fan") {
+        return 1;
+    }
+    if (mode == "dry") {
+        return 2;
+    }
+    if (mode == "cool") {
+        return 3;
+    }
+    if (mode == "heat") {
+        return 4;
+    }
+    if (mode == "auto") {
+        return 5;
+    }
+
+    return (uint8_t)mode.toInt();
+}
+
+const char* HomeAssistantBridge::acFanName(uint8_t fanMode) const {
+    switch (fanMode) {
+        case 0:
+            return "auto";
+        case 1:
+            return "low";
+        case 2:
+            return "medium";
+        case 3:
+            return "high";
+        case 4:
+            return "max";
+        default:
+            return "unknown";
+    }
+}
+
+uint8_t HomeAssistantBridge::acFanValue(const String& fanMode) const {
+    if (fanMode == "auto") {
+        return 0;
+    }
+    if (fanMode == "low") {
+        return 1;
+    }
+    if (fanMode == "medium") {
+        return 2;
+    }
+    if (fanMode == "high") {
+        return 3;
+    }
+    if (fanMode == "max") {
+        return 4;
+    }
+
+    return (uint8_t)fanMode.toInt();
+}
+
+const char* HomeAssistantBridge::displayPageName(uint8_t pageIndex) const {
+    switch (pageIndex) {
+        case 0:
+            return "overview";
+        case 1:
+            return "temp";
+        case 2:
+            return "ac";
+        case 3:
+            return "network";
+        default:
+            return "unknown";
+    }
+}
+
+const char* HomeAssistantBridge::vfdRunState(const char* lastAction) const {
+    if (strcmp(lastAction, "forward") == 0) {
+        return "fwd";
+    }
+    if (strcmp(lastAction, "reverse") == 0) {
+        return "rev";
+    }
+    if (strcmp(lastAction, "stop") == 0) {
+        return "stop";
+    }
+
+    return "unknown";
 }
 
 String HomeAssistantBridge::topicSuffix(const char* topic) const {
