@@ -69,12 +69,52 @@ void App::update() {
     display.update(network.isConnected(), network.getIp(), hp, tempSensors);
     updateHeatPump();
     updateIoExpanderInputs();
+
+    updateDeviceState();
 }
 
 
 void App::updateHeatPump() {
     hp.waitForFrame();
     hp.sendPendingFrame();
+}
+
+
+void App::updateDeviceState() {
+    state.uptimeMs = millis();
+    state.wifiConnected = network.isConnected();
+    state.ip = network.getIp();
+
+    state.ac.bound = hp.isBound();
+    state.ac.powerOn = hp.getOnOff();
+    state.ac.temperature = hp.getTemp();
+    state.ac.mode = hp.getMode();
+    state.ac.fanMode = hp.getFanMode();
+    state.ac.primaryController = hp.isPrimaryController();
+    state.ac.controllerAddress = hp.getControllerAddress();
+    state.ac.seenPrimaryController = hp.hasSeenPrimaryController();
+    state.ac.seenSecondaryController = hp.hasSeenSecondaryController();
+    state.ac.updatePending = hp.updatePending();
+    state.ac.framePending = hp.hasPendingFrame();
+    state.ac.debugEnabled = hp.debugPrint;
+    state.ac.hasReceivedFrame = hp.hasReceivedFrame();
+    state.ac.lastFrameAgeMs = hp.hasReceivedFrame() ? hp.getLastFrameAgeMs() : 0;
+    state.ac.updateFields = hp.getUpdateFields();
+
+    state.temperatures.sensorCount = tempSensors.getSensorCount();
+    for (uint8_t i = 0; i < TEMP_MAX_SENSORS; i++) {
+        state.temperatures.values[i] = tempSensors.getTemperatureC(i);
+    }
+
+    state.input.ioExpanderReady = ioExpanderReady;
+    state.input.buttonBackPressed = buttonBack.isPressed();
+    state.input.buttonLeftPressed = buttonLeft.isPressed();
+    state.input.buttonRightPressed = buttonRight.isPressed();
+    state.input.buttonOkPressed = buttonOk.isPressed();
+
+    state.display.ready = display.isReady();
+    state.display.pageIndex = display.getPageIndex();
+    state.display.pageName = display.getPageName();
 }
 
 
