@@ -28,6 +28,20 @@ struct TemperatureStateSnapshot {
     float values[TEMP_MAX_SENSORS] = {};
 };
 
+struct VfdStateSnapshot {
+    bool initialized = false;
+    const char* lastAction = "none";
+    bool hasRequestedFrequency = false;
+    float requestedFrequencyHz = 0.0f;
+    uint32_t requestCount = 0;
+    uint32_t okCount = 0;
+    uint32_t errorCount = 0;
+    uint32_t lastToken = 0;
+    uint8_t lastErrorCode = 0;
+    bool hasActivity = false;
+    unsigned long lastActivityAgeMs = 0;
+};
+
 struct InputStateSnapshot {
     bool ioExpanderReady = false;
     bool buttonBackPressed = false;
@@ -48,6 +62,7 @@ struct DeviceState {
 
     AcStateSnapshot ac;
     TemperatureStateSnapshot temperatures;
+    VfdStateSnapshot vfd;
     InputStateSnapshot input;
     DisplayStateSnapshot display;
 

@@ -12,6 +12,7 @@
 #include "DisplayUi.h"
 #include "ButtonInput.h"
 #include "DeviceState.h"
+#include "DeviceController.h"
 
 // -=-=-=-=-= Pin definitions and settings -=-=-=-=-=-
 // AC LIN bus (Serial1)
@@ -69,6 +70,7 @@ private:
     Mcp23017Expander ioExpander;
     DisplayUi display;
     DeviceState state;
+    DeviceController controller;
     bool ioExpanderReady = false;
     int lastGpa5State = HIGH;
     int lastGpa6State = HIGH;

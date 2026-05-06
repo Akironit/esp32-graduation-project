@@ -32,22 +32,28 @@ void VfdController::begin(
     client.onErrorHandler(&VfdController::handleError);
 
     client.begin(serial);
+    initialized = true;
+    activitySeen = false;
+    lastAction = "initialized";
 
     Logger::info(TAG_VFD, "Controller initialized");
 }
 
 
 void VfdController::forward() {
+    lastAction = "forward";
     queueWriteSingle(0x2000, 0x0001);
 }
 
 
 void VfdController::reverse() {
+    lastAction = "reverse";
     queueWriteSingle(0x2000, 0x0002);
 }
 
 
 void VfdController::stop() {
+    lastAction = "stop";
     queueWriteSingle(0x2000, 0x0005);
 }
 
@@ -62,17 +68,81 @@ void VfdController::setFrequency(float hz) {
     }
 
     uint16_t value = (uint16_t)lroundf(hz * 100.0f);
+    lastAction = "set frequency";
+    requestedFrequencySet = true;
+    requestedFrequencyHz = hz;
     queueWriteSingle(0x2001, value);
 }
 
 
 void VfdController::readRegister(uint16_t address, uint16_t count) {
+    lastAction = "read register";
     queueReadHolding(address, count);
 }
 
 
 void VfdController::writeRegister(uint16_t address, uint16_t value) {
+    lastAction = "write register";
     queueWriteSingle(address, value);
+}
+
+
+bool VfdController::isInitialized() const {
+    return initialized;
+}
+
+
+const char* VfdController::getLastAction() const {
+    return lastAction;
+}
+
+
+bool VfdController::hasRequestedFrequency() const {
+    return requestedFrequencySet;
+}
+
+
+float VfdController::getRequestedFrequencyHz() const {
+    return requestedFrequencyHz;
+}
+
+
+uint32_t VfdController::getRequestCount() const {
+    return requestCount;
+}
+
+
+uint32_t VfdController::getOkCount() const {
+    return okCount;
+}
+
+
+uint32_t VfdController::getErrorCount() const {
+    return errorCount;
+}
+
+
+uint32_t VfdController::getLastToken() const {
+    return lastToken;
+}
+
+
+uint8_t VfdController::getLastErrorCode() const {
+    return lastErrorCode;
+}
+
+
+bool VfdController::hasActivity() const {
+    return activitySeen;
+}
+
+
+unsigned long VfdController::getLastActivityAgeMs() const {
+    if (!activitySeen) {
+        return 0;
+    }
+
+    return millis() - lastActivityMs;
 }
 
 
@@ -83,6 +153,8 @@ uint32_t VfdController::nextToken() {
 
 void VfdController::queueReadHolding(uint16_t address, uint16_t count) {
     uint32_t token = nextToken();
+    requestCount++;
+    lastToken = token;
 
     Error error = client.addRequest(
         token,
@@ -100,6 +172,8 @@ void VfdController::queueReadHolding(uint16_t address, uint16_t count) {
 
 void VfdController::queueWriteSingle(uint16_t address, uint16_t value) {
     uint32_t token = nextToken();
+    requestCount++;
+    lastToken = token;
 
     Error error = client.addRequest(
         token,
@@ -116,6 +190,11 @@ void VfdController::queueWriteSingle(uint16_t address, uint16_t value) {
 
 
 void VfdController::onData(ModbusMessage msg, uint32_t token) {
+    okCount++;
+    lastToken = token;
+    activitySeen = true;
+    lastActivityMs = millis();
+
     Logger::infof(
         TAG_VFD,
         "OK token=%lu server=%u FC=%u len=%u",
@@ -125,18 +204,28 @@ void VfdController::onData(ModbusMessage msg, uint32_t token) {
         (unsigned)msg.size()
     );
 
-    Logger::raw("[VFD] Data: ");
+    char data[160] = {};
+    size_t offset = 0;
 
     for (auto& byteValue : msg) {
-        Logger::rawf("%02X ", byteValue);
+        if (offset + 4 >= sizeof(data)) {
+            break;
+        }
+
+        offset += snprintf(data + offset, sizeof(data) - offset, "%02X ", byteValue);
     }
 
-    Logger::raw("\n");
+    Logger::debugf(TAG_VFD, "Data: %s", data);
 }
 
 
 void VfdController::onError(Error error, uint32_t token) {
     ModbusError modbusError(error);
+    errorCount++;
+    lastToken = token;
+    lastErrorCode = (uint8_t)error;
+    activitySeen = true;
+    lastActivityMs = millis();
 
     Logger::errorf(
         TAG_VFD,

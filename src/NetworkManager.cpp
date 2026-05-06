@@ -68,13 +68,17 @@ void NetworkManager::connectWiFi() {
 
     const unsigned long startMs = millis();
     const unsigned long timeoutMs = 15000;
+    unsigned long lastWaitLogMs = 0;
 
     while (WiFi.status() != WL_CONNECTED && millis() - startMs < timeoutMs) {
         delay(250);
-        Logger::raw(".");
-    }
 
-    Logger::raw("\n");
+        const unsigned long now = millis();
+        if (now - lastWaitLogMs >= 1000) {
+            lastWaitLogMs = now;
+            Logger::debug(TAG_NET, "Waiting for Wi-Fi connection...");
+        }
+    }
 
     if (WiFi.status() == WL_CONNECTED) {
         Logger::info(TAG_NET, "Wi-Fi connected");
@@ -93,12 +97,12 @@ void NetworkManager::setupOTA() {
     });
 
     ArduinoOTA.onEnd([]() {
-        Logger::raw("\n");
         Logger::info(TAG_OTA, "End");
     });
 
     ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-        Logger::rawf("[OTA] Progress: %u%%\r", (progress * 100) / total);
+        const unsigned int percent = (progress * 100) / total;
+        Logger::debugf(TAG_OTA, "Progress: %u%%", percent);
     });
 
     ArduinoOTA.onError([](ota_error_t error) {

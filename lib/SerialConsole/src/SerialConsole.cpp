@@ -44,11 +44,20 @@ size_t SerialConsole::ConsoleOutput::write(const uint8_t* buffer, size_t size) {
 }
 
 
-void SerialConsole::begin(FujiHeatPump* hp, VfdController* vfd, TemperatureSensors* temp, DisplayUi* display) {
+void SerialConsole::begin(
+    FujiHeatPump* hp,
+    VfdController* vfd,
+    TemperatureSensors* temp,
+    DisplayUi* display,
+    DeviceState* state,
+    DeviceController* controller
+) {
     this->hp = hp;
     this->vfd = vfd;
     this->temp = temp;
     this->display = display;
+    this->state = state;
+    this->controller = controller;
 
     if (this->hp != nullptr) {
         this->hp->setDebugOutput(&Serial);
@@ -307,15 +316,34 @@ void SerialConsole::processCommand(const String& cmd) {
         return;
     }
 
+    if (cmd == "state" || cmd == "state status") {
+        printStateStatus();
+        return;
+    }
+
+    if (cmd == "state help") {
+        printStateHelp();
+        return;
+    }
+
+    if (cmd.startsWith("state ")) {
+        processStateCommand(cmd.substring(6));
+        return;
+    }
+
     if (cmd.startsWith("log ")) {
         processLogCommand(cmd.substring(4));
         return;
     }
 
     if (cmd == "reboot" || cmd == "restart") {
+        if (controller == nullptr) {
+            println("Error: controller action layer is not available");
+            return;
+        }
+
         println("Rebooting ESP32...");
-        delay(100);
-        ESP.restart();
+        controller->restart();
         return;
     }
 
@@ -354,7 +382,7 @@ void SerialConsole::processCommand(const String& cmd) {
         return;
     }
 
-    println("Unknown command. Use: ac <cmd>, vfd <cmd>, temp <cmd>, display <cmd>");
+    println("Unknown command. Use: ac <cmd>, vfd <cmd>, temp <cmd>, display <cmd>, state <cmd>");
     println("Type 'help' for available commands");
 }
 
@@ -369,20 +397,32 @@ void SerialConsole::processAcCommand(const String& cmd) {
     }
 
     if (args == "debug on") {
-        hp->setDebug(true);
+        if (controller == nullptr || !controller->setAcDebug(true)) {
+            println("Error: AC controller action layer is not available");
+            return;
+        }
+
         println("=== AC debug ENABLED ===");
         return;
     }
 
     if (args == "debug off") {
-        hp->setDebug(false);
+        if (controller == nullptr || !controller->setAcDebug(false)) {
+            println("Error: AC controller action layer is not available");
+            return;
+        }
+
         println("=== AC debug DISABLED ===");
         return;
     }
 
     if (args == "role") {
         print("Current AC controller role: ");
-        println(hp->isPrimaryController() ? "PRIMARY" : "SECONDARY");
+        if (state != nullptr) {
+            println(state->ac.primaryController ? "PRIMARY" : "SECONDARY");
+        } else {
+            println(hp->isPrimaryController() ? "PRIMARY" : "SECONDARY");
+        }
         return;
     }
 
@@ -390,11 +430,19 @@ void SerialConsole::processAcCommand(const String& cmd) {
         String role = args.substring(5);
 
         if (role == "primary") {
-            hp->setControllerRole(true);
+            if (controller == nullptr || !controller->setAcPrimaryRole(true)) {
+                println("Error: AC controller action layer is not available");
+                return;
+            }
+
             println(">>> AC: Controller role set to PRIMARY");
             println(">>> AC: Handshake state reset, waiting for new frames");
         } else if (role == "secondary") {
-            hp->setControllerRole(false);
+            if (controller == nullptr || !controller->setAcPrimaryRole(false)) {
+                println("Error: AC controller action layer is not available");
+                return;
+            }
+
             println(">>> AC: Controller role set to SECONDARY");
             println(">>> AC: Handshake state reset, waiting for new frames");
         } else {
@@ -405,13 +453,21 @@ void SerialConsole::processAcCommand(const String& cmd) {
     }
 
     if (args == "on") {
-        hp->setOnOff(true);
+        if (controller == nullptr || !controller->setAcPower(true)) {
+            println("Error: AC controller action layer is not available");
+            return;
+        }
+
         println(">>> AC: Power ON");
         return;
     }
 
     if (args == "off") {
-        hp->setOnOff(false);
+        if (controller == nullptr || !controller->setAcPower(false)) {
+            println("Error: AC controller action layer is not available");
+            return;
+        }
+
         println(">>> AC: Power OFF");
         return;
     }
@@ -420,7 +476,11 @@ void SerialConsole::processAcCommand(const String& cmd) {
         int temp = args.substring(5).toInt();
 
         if (temp >= 16 && temp <= 30) {
-            hp->setTemp(temp);
+            if (controller == nullptr || !controller->setAcTemperature((uint8_t)temp)) {
+                println("Error: AC controller action layer is not available");
+                return;
+            }
+
             print(">>> AC: Set temperature ");
             println(temp);
         } else {
@@ -449,7 +509,11 @@ void SerialConsole::processAcCommand(const String& cmd) {
             return;
         }
 
-        hp->setMode(modeVal);
+        if (controller == nullptr || !controller->setAcMode(modeVal)) {
+            println("Error: AC controller action layer is not available");
+            return;
+        }
+
         print(">>> AC: Set mode ");
         println(modeStr);
         return;
@@ -459,7 +523,11 @@ void SerialConsole::processAcCommand(const String& cmd) {
         byte speed = (byte)args.substring(4).toInt();
 
         if (speed <= 4) {
-            hp->setFanMode(speed);
+            if (controller == nullptr || !controller->setAcFanMode(speed)) {
+                println("Error: AC controller action layer is not available");
+                return;
+            }
+
             print(">>> AC: Set fan mode ");
             println(speed);
         } else {
@@ -485,19 +553,31 @@ void SerialConsole::processVfdCommand(const String& cmd) {
     }
 
     if (cmd == "fwd") {
-        vfd->forward();
+        if (controller == nullptr || !controller->vfdForward()) {
+            println("Error: VFD controller action layer is not available");
+            return;
+        }
+
         println(">>> VFD: Forward");
         return;
     }
 
     if (cmd == "rev") {
-        vfd->reverse();
+        if (controller == nullptr || !controller->vfdReverse()) {
+            println("Error: VFD controller action layer is not available");
+            return;
+        }
+
         println(">>> VFD: Reverse");
         return;
     }
 
     if (cmd == "stop") {
-        vfd->stop();
+        if (controller == nullptr || !controller->vfdStop()) {
+            println("Error: VFD controller action layer is not available");
+            return;
+        }
+
         println(">>> VFD: Stop");
         return;
     }
@@ -510,7 +590,10 @@ void SerialConsole::processVfdCommand(const String& cmd) {
             return;
         }
 
-        vfd->setFrequency(hz);
+        if (controller == nullptr || !controller->vfdSetFrequency(hz)) {
+            println("Error: VFD controller action layer is not available");
+            return;
+        }
 
         print(">>> VFD: Set frequency ");
         print(hz, 2);
@@ -538,7 +621,11 @@ void SerialConsole::processVfdCommand(const String& cmd) {
             return;
         }
 
-        vfd->readRegister(address, count);
+        if (controller == nullptr || !controller->vfdReadRegister(address, count)) {
+            println("Error: VFD controller action layer is not available");
+            return;
+        }
+
         println(">>> VFD: Read request queued");
         return;
     }
@@ -565,7 +652,11 @@ void SerialConsole::processVfdCommand(const String& cmd) {
             return;
         }
 
-        vfd->writeRegister(address, value);
+        if (controller == nullptr || !controller->vfdWriteRegister(address, value)) {
+            println("Error: VFD controller action layer is not available");
+            return;
+        }
+
         println(">>> VFD: Write request queued");
         return;
     }
@@ -589,35 +680,52 @@ void SerialConsole::processDisplayCommand(const String& cmd) {
     }
 
     if (args == "next") {
-        display->nextPage();
+        if (controller == nullptr || !controller->displayNextPage()) {
+            println("[DISPLAY] Controller action layer is not available");
+            return;
+        }
+
         print("[DISPLAY] Page: ");
         println(display->getPageName());
         return;
     }
 
     if (args == "prev" || args == "previous") {
-        display->previousPage();
+        if (controller == nullptr || !controller->displayPreviousPage()) {
+            println("[DISPLAY] Controller action layer is not available");
+            return;
+        }
+
         print("[DISPLAY] Page: ");
         println(display->getPageName());
         return;
     }
 
     if (args == "status") {
-        print("[DISPLAY] Ready: ");
-        println(display->isReady() ? "YES" : "NO");
-        print("[DISPLAY] Page: ");
-        println(display->getPageName());
+        printDisplayStateStatus();
         return;
     }
 
     if (args == "overview") {
-        display->setPage(DisplayUi::Page::Overview);
+        if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::Overview)) {
+            println("[DISPLAY] Controller action layer is not available");
+            return;
+        }
     } else if (args == "temp" || args == "temperatures") {
-        display->setPage(DisplayUi::Page::Temperatures);
+        if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::Temperatures)) {
+            println("[DISPLAY] Controller action layer is not available");
+            return;
+        }
     } else if (args == "ac") {
-        display->setPage(DisplayUi::Page::AirConditioner);
+        if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::AirConditioner)) {
+            println("[DISPLAY] Controller action layer is not available");
+            return;
+        }
     } else if (args == "net" || args == "network") {
-        display->setPage(DisplayUi::Page::Network);
+        if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::Network)) {
+            println("[DISPLAY] Controller action layer is not available");
+            return;
+        }
     } else {
         println("[DISPLAY] Unknown display command. Use: display help");
         return;
@@ -667,50 +775,229 @@ void SerialConsole::processLogCommand(const String& cmd) {
 }
 
 
-void SerialConsole::printAcStatus() {
-    if (hp == nullptr) {
-        println("Error: heat pump module is not connected to console");
+void SerialConsole::processStateCommand(const String& cmd) {
+    String args = cmd;
+    args.trim();
+
+    if (args == "status") {
+        printStateStatus();
+        return;
+    }
+
+    if (args == "help") {
+        printStateHelp();
+        return;
+    }
+
+    println("[STATE] Unknown state command. Use: state help");
+}
+
+
+void SerialConsole::printStateStatus() {
+    if (state == nullptr) {
+        println("[STATE] DeviceState is not connected to console");
         return;
     }
 
     char updateMask[8];
-    snprintf(updateMask, sizeof(updateMask), "0x%02X", hp->getUpdateFields());
+    snprintf(updateMask, sizeof(updateMask), "0x%02X", state->ac.updateFields);
+
+    char lastErrorCode[8];
+    snprintf(lastErrorCode, sizeof(lastErrorCode), "0x%02X", state->vfd.lastErrorCode);
+
+    println();
+    println("--- DEVICE STATE ---");
+    print("Uptime: ");
+    print(String(state->uptimeMs));
+    println(" ms");
+    print("Wi-Fi: ");
+    println(state->wifiConnected ? "CONNECTED" : "DISCONNECTED");
+    print("IP: ");
+    println(state->ip.toString());
+    println();
+
+    println("[AC]");
+    print("Power: ");
+    println(state->ac.powerOn ? "ON" : "OFF");
+    print("Temp: ");
+    println((int)state->ac.temperature);
+    print("Mode: ");
+    println((int)state->ac.mode);
+    print("Fan: ");
+    println((int)state->ac.fanMode);
+    print("Bound: ");
+    println(state->ac.bound ? "YES" : "NO");
+    print("Last frame age: ");
+    if (state->ac.hasReceivedFrame) {
+        print(String(state->ac.lastFrameAgeMs));
+        println(" ms");
+    } else {
+        println("never");
+    }
+    print("Role: ");
+    println(state->ac.primaryController ? "PRIMARY" : "SECONDARY");
+    print("Address: ");
+    println((int)state->ac.controllerAddress);
+    print("Seen primary: ");
+    println(state->ac.seenPrimaryController ? "YES" : "NO");
+    print("Seen secondary: ");
+    println(state->ac.seenSecondaryController ? "YES" : "NO");
+    print("Update pending: ");
+    println(state->ac.updatePending ? "YES" : "NO");
+    print("Frame pending: ");
+    println(state->ac.framePending ? "YES" : "NO");
+    print("Update mask: ");
+    println(updateMask);
+    print("Debug: ");
+    println(state->ac.debugEnabled ? "YES" : "NO");
+    println();
+
+    println("[VFD]");
+    print("Initialized: ");
+    println(state->vfd.initialized ? "YES" : "NO");
+    print("Last action: ");
+    println(state->vfd.lastAction);
+    print("Requested frequency: ");
+    if (state->vfd.hasRequestedFrequency) {
+        print(state->vfd.requestedFrequencyHz, 2);
+        println(" Hz");
+    } else {
+        println("none");
+    }
+    print("Requests: ");
+    println(String(state->vfd.requestCount));
+    print("OK responses: ");
+    println(String(state->vfd.okCount));
+    print("Errors: ");
+    println(String(state->vfd.errorCount));
+    print("Last token: ");
+    println(String(state->vfd.lastToken));
+    print("Last error: ");
+    println(lastErrorCode);
+    print("Last activity age: ");
+    if (state->vfd.hasActivity) {
+        print(String(state->vfd.lastActivityAgeMs));
+        println(" ms");
+    } else {
+        println("never");
+    }
+    println();
+
+    println("[TEMP]");
+    print("Sensors: ");
+    println((int)state->temperatures.sensorCount);
+    for (uint8_t i = 0; i < state->temperatures.sensorCount && i < TEMP_MAX_SENSORS; i++) {
+        print("Sensor ");
+        print((int)i);
+        print(": ");
+        print(state->temperatures.values[i], 2);
+        println(" C");
+    }
+    println();
+
+    println("[INPUT]");
+    print("MCP23017: ");
+    println(state->input.ioExpanderReady ? "READY" : "NOT READY");
+    print("BACK: ");
+    println(state->input.buttonBackPressed ? "PRESSED" : "released");
+    print("LEFT: ");
+    println(state->input.buttonLeftPressed ? "PRESSED" : "released");
+    print("RIGHT: ");
+    println(state->input.buttonRightPressed ? "PRESSED" : "released");
+    print("OK: ");
+    println(state->input.buttonOkPressed ? "PRESSED" : "released");
+    println();
+
+    println("[DISPLAY]");
+    print("Ready: ");
+    println(state->display.ready ? "YES" : "NO");
+    print("Page index: ");
+    println((int)state->display.pageIndex);
+    print("Page name: ");
+    println(state->display.pageName);
+    println("--------------------");
+    println();
+}
+
+
+void SerialConsole::printTemperatureStateStatus() {
+    if (state == nullptr) {
+        println("[TEMP] DeviceState is not connected to console");
+        return;
+    }
+
+    println();
+    println("[TEMP] Temperature sensors status");
+    print("[TEMP] Sensors: ");
+    println((int)state->temperatures.sensorCount);
+
+    for (uint8_t i = 0; i < state->temperatures.sensorCount && i < TEMP_MAX_SENSORS; i++) {
+        print("[TEMP] Sensor ");
+        print((int)i);
+        print(" = ");
+        print(state->temperatures.values[i], 2);
+        println(" C");
+    }
+}
+
+
+void SerialConsole::printDisplayStateStatus() {
+    if (state == nullptr) {
+        println("[DISPLAY] DeviceState is not connected to console");
+        return;
+    }
+
+    print("[DISPLAY] Ready: ");
+    println(state->display.ready ? "YES" : "NO");
+    print("[DISPLAY] Page: ");
+    println(state->display.pageName);
+}
+
+
+void SerialConsole::printAcStatus() {
+    if (state == nullptr) {
+        println("Error: DeviceState is not connected to console");
+        return;
+    }
+
+    char updateMask[8];
+    snprintf(updateMask, sizeof(updateMask), "0x%02X", state->ac.updateFields);
 
     println();
     println("--- AC STATUS ---");
     print("Power: ");
-    println(hp->getOnOff() ? "ON" : "OFF");
+    println(state->ac.powerOn ? "ON" : "OFF");
     print("Temp: ");
-    println(hp->getTemp());
+    println((int)state->ac.temperature);
     print("Mode: ");
-    println(hp->getMode());
+    println((int)state->ac.mode);
     print("Fan: ");
-    println(hp->getFanMode());
+    println((int)state->ac.fanMode);
     print("Bound: ");
-    println(hp->isBound() ? "YES" : "NO");
+    println(state->ac.bound ? "YES" : "NO");
     print("Last frame age: ");
-    if (hp->hasReceivedFrame()) {
-        print(String(hp->getLastFrameAgeMs()));
+    if (state->ac.hasReceivedFrame) {
+        print(String(state->ac.lastFrameAgeMs));
         println(" ms");
     } else {
         println("never");
     }
     print("Controller role: ");
-    println(hp->isPrimaryController() ? "PRIMARY" : "SECONDARY");
+    println(state->ac.primaryController ? "PRIMARY" : "SECONDARY");
     print("Controller address: ");
-    println((uint16_t)hp->getControllerAddress());
+    println((int)state->ac.controllerAddress);
     print("Seen primary: ");
-    println(hp->hasSeenPrimaryController() ? "YES" : "NO");
+    println(state->ac.seenPrimaryController ? "YES" : "NO");
     print("Seen secondary: ");
-    println(hp->hasSeenSecondaryController() ? "YES" : "NO");
+    println(state->ac.seenSecondaryController ? "YES" : "NO");
     print("Update pending: ");
-    println(hp->updatePending() ? "YES" : "NO");
+    println(state->ac.updatePending ? "YES" : "NO");
     print("Frame pending: ");
-    println(hp->hasPendingFrame() ? "YES" : "NO");
+    println(state->ac.framePending ? "YES" : "NO");
     print("Update mask: ");
     println(updateMask);
     print("Debug: ");
-    println(hp->debugPrint ? "YES" : "NO");
+    println(state->ac.debugEnabled ? "YES" : "NO");
     println("-----------------");
     println();
 }
@@ -723,6 +1010,7 @@ void SerialConsole::printHelp() {
     println("vfd <command>  - Frequency drive control");
     println("temp <command> - Temperature sensors control");
     println("display <cmd>  - LCD display pages");
+    println("state <cmd>    - Device state snapshot");
     println();
     println("Examples:");
     println("ac on");
@@ -734,11 +1022,12 @@ void SerialConsole::printHelp() {
     println("temp status");
     println("temp read");
     println("display next");
+    println("state status");
     println("log level debug");
     println("log history");
     println("reboot");
     println();
-    println("Type 'ac help', 'vfd help', 'temp help', 'display help' or 'log help'");
+    println("Type 'ac help', 'vfd help', 'temp help', 'display help', 'state help' or 'log help'");
     println("Other commands: reboot/restart");
     println("------------------------------");
     println();
@@ -810,6 +1099,17 @@ void SerialConsole::printLogHelp() {
 }
 
 
+void SerialConsole::printStateHelp() {
+    println();
+    println("--- STATE commands ---");
+    println("state");
+    println("state status");
+    println("state help");
+    println("----------------------");
+    println();
+}
+
+
 uint16_t SerialConsole::parseHexU16(const String& value, bool& ok) {
     ok = false;
 
@@ -858,18 +1158,26 @@ void SerialConsole::processTempCommand(const String& cmd) {
     }
 
     if (args.length() == 0 || args == "status") {
-        temp->printStatus(consoleOutput);
+        printTemperatureStateStatus();
         return;
     }
 
     if (args == "read") {
-        temp->forceRead();
+        if (controller == nullptr || !controller->temperatureForceRead()) {
+            println("[TEMP] Controller action layer is not available");
+            return;
+        }
+
         temp->printStatus(consoleOutput);
         return;
     }
 
     if (args == "scan") {
-        temp->rescan();
+        if (controller == nullptr || !controller->temperatureRescan()) {
+            println("[TEMP] Controller action layer is not available");
+            return;
+        }
+
         temp->printAddresses(consoleOutput);
         return;
     }

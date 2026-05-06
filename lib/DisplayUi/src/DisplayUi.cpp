@@ -27,12 +27,7 @@ void DisplayUi::begin() {
     Logger::info(TAG_DISPLAY, "ST7789 display initialized");
 }
 
-void DisplayUi::update(
-    bool networkConnected,
-    const IPAddress& ip,
-    FujiHeatPump& heatPump,
-    TemperatureSensors& temperatures
-) {
+void DisplayUi::update(const DeviceState& state) {
     if (!ready) {
         return;
     }
@@ -46,7 +41,7 @@ void DisplayUi::update(
     lastRenderMs = now;
     dirty = false;
 
-    render(networkConnected, ip, heatPump, temperatures);
+    render(state);
 }
 
 void DisplayUi::nextPage() {
@@ -86,12 +81,7 @@ const char* DisplayUi::getPageName() const {
     return getPageName(currentPage);
 }
 
-void DisplayUi::render(
-    bool networkConnected,
-    const IPAddress& ip,
-    FujiHeatPump& heatPump,
-    TemperatureSensors& temperatures
-) {
+void DisplayUi::render(const DeviceState& state) {
     if (fullRedraw) {
         tft.fillScreen(COLOR_BG);
         resetLineCache();
@@ -102,16 +92,16 @@ void DisplayUi::render(
 
     switch (currentPage) {
         case Page::Overview:
-            drawOverview(networkConnected, ip, heatPump, temperatures);
+            drawOverview(state);
             break;
         case Page::Temperatures:
-            drawTemperatures(temperatures);
+            drawTemperatures(state.temperatures);
             break;
         case Page::AirConditioner:
-            drawAirConditioner(heatPump);
+            drawAirConditioner(state.ac);
             break;
         case Page::Network:
-            drawNetwork(networkConnected, ip);
+            drawNetwork(state);
             break;
         case Page::Count:
             break;
@@ -178,22 +168,17 @@ String DisplayUi::formatFloat(float value, uint8_t digits) const {
     return String(value, static_cast<unsigned int>(digits));
 }
 
-void DisplayUi::drawOverview(
-    bool networkConnected,
-    const IPAddress& ip,
-    FujiHeatPump& heatPump,
-    TemperatureSensors& temperatures
-) {
-    drawLine(0, 14, 46, networkConnected ? "Wi-Fi: connected" : "Wi-Fi: offline", statusColor(networkConnected));
-    drawLine(1, 14, 70, networkConnected ? ip.toString() : "IP: none");
-    drawLine(2, 14, 102, heatPump.isBound() ? "AC: bound" : "AC: waiting", statusColor(heatPump.isBound()));
-    drawLine(3, 14, 126, heatPump.getOnOff() ? "Power: ON" : "Power: OFF");
-    drawLine(4, 14, 150, "Set: " + String(heatPump.getTemp()) + " C  Mode: " + String(heatPump.getMode()));
-    drawLine(5, 14, 182, "DS18B20 sensors: " + String(temperatures.getSensorCount()));
+void DisplayUi::drawOverview(const DeviceState& state) {
+    drawLine(0, 14, 46, state.wifiConnected ? "Wi-Fi: connected" : "Wi-Fi: offline", statusColor(state.wifiConnected));
+    drawLine(1, 14, 70, state.wifiConnected ? state.ip.toString() : "IP: none");
+    drawLine(2, 14, 102, state.ac.bound ? "AC: bound" : "AC: waiting", statusColor(state.ac.bound));
+    drawLine(3, 14, 126, state.ac.powerOn ? "Power: ON" : "Power: OFF");
+    drawLine(4, 14, 150, "Set: " + String(state.ac.temperature) + " C  Mode: " + String(state.ac.mode));
+    drawLine(5, 14, 182, "DS18B20 sensors: " + String(state.temperatures.sensorCount));
 }
 
-void DisplayUi::drawTemperatures(TemperatureSensors& temperatures) {
-    const uint8_t count = temperatures.getSensorCount();
+void DisplayUi::drawTemperatures(const TemperatureStateSnapshot& temperatures) {
+    const uint8_t count = temperatures.sensorCount;
 
     if (count == 0) {
         drawLine(0, 14, 54, "No DS18B20 sensors found");
@@ -201,30 +186,30 @@ void DisplayUi::drawTemperatures(TemperatureSensors& temperatures) {
     }
 
     for (uint8_t i = 0; i < count && i < 6; i++) {
-        const float value = temperatures.getTemperatureC(i);
+        const float value = temperatures.values[i];
         const int y = 48 + i * 26;
         drawLine(i, 14, y, "Sensor " + String(i) + ": " + formatFloat(value, 2) + " C");
     }
 }
 
-void DisplayUi::drawAirConditioner(FujiHeatPump& heatPump) {
-    drawLine(0, 14, 48, heatPump.isBound() ? "Link: bound" : "Link: not bound", statusColor(heatPump.isBound()));
-    drawLine(1, 14, 76, String("Power: ") + (heatPump.getOnOff() ? "ON" : "OFF"));
-    drawLine(2, 14, 102, "Temp: " + String(heatPump.getTemp()) + " C");
-    drawLine(3, 14, 128, "Mode: " + String(heatPump.getMode()) + "  Fan: " + String(heatPump.getFanMode()));
-    drawLine(4, 14, 154, String("Role: ") + (heatPump.isPrimaryController() ? "PRIMARY" : "SECONDARY"));
+void DisplayUi::drawAirConditioner(const AcStateSnapshot& ac) {
+    drawLine(0, 14, 48, ac.bound ? "Link: bound" : "Link: not bound", statusColor(ac.bound));
+    drawLine(1, 14, 76, String("Power: ") + (ac.powerOn ? "ON" : "OFF"));
+    drawLine(2, 14, 102, "Temp: " + String(ac.temperature) + " C");
+    drawLine(3, 14, 128, "Mode: " + String(ac.mode) + "  Fan: " + String(ac.fanMode));
+    drawLine(4, 14, 154, String("Role: ") + (ac.primaryController ? "PRIMARY" : "SECONDARY"));
 
-    if (heatPump.hasReceivedFrame()) {
-        drawLine(5, 14, 180, "Last frame: " + String(heatPump.getLastFrameAgeMs()) + " ms");
+    if (ac.hasReceivedFrame) {
+        drawLine(5, 14, 180, "Last frame: " + String(ac.lastFrameAgeMs) + " ms");
     } else {
         drawLine(5, 14, 180, "Last frame: never");
     }
 }
 
-void DisplayUi::drawNetwork(bool networkConnected, const IPAddress& ip) {
-    drawLine(0, 14, 52, networkConnected ? "Wi-Fi connected" : "Wi-Fi disconnected", statusColor(networkConnected));
+void DisplayUi::drawNetwork(const DeviceState& state) {
+    drawLine(0, 14, 52, state.wifiConnected ? "Wi-Fi connected" : "Wi-Fi disconnected", statusColor(state.wifiConnected));
     drawLine(1, 14, 88, "IP address:");
-    drawLine(2, 14, 114, networkConnected ? ip.toString() : "none");
+    drawLine(2, 14, 114, state.wifiConnected ? state.ip.toString() : "none");
     drawLine(3, 14, 154, "OTA: enabled when Wi-Fi is up");
 }
 

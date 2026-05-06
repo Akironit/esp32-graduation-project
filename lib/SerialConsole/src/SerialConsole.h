@@ -9,12 +9,21 @@
 #include "VfdController.h"
 #include "TemperatureSensors.h"
 #include "DisplayUi.h"
+#include "DeviceState.h"
+#include "DeviceController.h"
 #include "Logger.h"
 
 
 class SerialConsole {
 public:
-    void begin(FujiHeatPump* hp, VfdController* vfd, TemperatureSensors* temp, DisplayUi* display = nullptr);
+    void begin(
+        FujiHeatPump* hp,
+        VfdController* vfd,
+        TemperatureSensors* temp,
+        DisplayUi* display = nullptr,
+        DeviceState* state = nullptr,
+        DeviceController* controller = nullptr
+    );
     void update();
     void startTelnet();
 
@@ -34,6 +43,8 @@ private:
     VfdController* vfd = nullptr;
     TemperatureSensors* temp = nullptr;
     DisplayUi* display = nullptr;
+    DeviceState* state = nullptr;
+    DeviceController* controller = nullptr;
 
     WiFiServer telnetServer{23};
     WiFiClient telnetClient;
@@ -64,12 +75,17 @@ private:
     void processTempCommand(const String& cmd);
     void processDisplayCommand(const String& cmd);
     void processLogCommand(const String& cmd);
+    void processStateCommand(const String& cmd);
 
     void printHelp();
     void printAcHelp();
     void printVfdHelp();
     void printDisplayHelp();
     void printLogHelp();
+    void printStateHelp();
+    void printStateStatus();
+    void printTemperatureStateStatus();
+    void printDisplayStateStatus();
     void printAcStatus();
 
     uint16_t parseHexU16(const String& value, bool& ok);

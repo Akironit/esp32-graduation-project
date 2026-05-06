@@ -22,7 +22,8 @@ void IRAM_ATTR handleMcpInterruptB() {
 
 
 void App::begin() {
-    console.begin(&hp, &vfd, &tempSensors, &display);
+    controller.begin(&hp, &vfd, &display, &tempSensors);
+    console.begin(&hp, &vfd, &tempSensors, &display, &state, &controller);
     display.begin();
 
     network.begin();
@@ -66,7 +67,8 @@ void App::update() {
     updateHeatPump();
     updateIoExpanderInputs();
 
-    display.update(network.isConnected(), network.getIp(), hp, tempSensors);
+    updateDeviceState();
+    display.update(state);
     updateHeatPump();
     updateIoExpanderInputs();
 
@@ -105,6 +107,18 @@ void App::updateDeviceState() {
     for (uint8_t i = 0; i < TEMP_MAX_SENSORS; i++) {
         state.temperatures.values[i] = tempSensors.getTemperatureC(i);
     }
+
+    state.vfd.initialized = vfd.isInitialized();
+    state.vfd.lastAction = vfd.getLastAction();
+    state.vfd.hasRequestedFrequency = vfd.hasRequestedFrequency();
+    state.vfd.requestedFrequencyHz = vfd.getRequestedFrequencyHz();
+    state.vfd.requestCount = vfd.getRequestCount();
+    state.vfd.okCount = vfd.getOkCount();
+    state.vfd.errorCount = vfd.getErrorCount();
+    state.vfd.lastToken = vfd.getLastToken();
+    state.vfd.lastErrorCode = vfd.getLastErrorCode();
+    state.vfd.hasActivity = vfd.hasActivity();
+    state.vfd.lastActivityAgeMs = vfd.getLastActivityAgeMs();
 
     state.input.ioExpanderReady = ioExpanderReady;
     state.input.buttonBackPressed = buttonBack.isPressed();
@@ -261,7 +275,7 @@ void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
         Logger::debugf(TAG_INPUT, "Button %s long press", name);
 
         if (strcmp(name, "BACK") == 0) {
-            display.setPage(DisplayUi::Page::Overview);
+            controller.displaySetPage(DisplayUi::Page::Overview);
         } else if (strcmp(name, "OK") == 0) {
             Logger::debug(TAG_INPUT, "OK long press action is reserved for future menu selection");
         }
@@ -272,11 +286,11 @@ void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
     Logger::debugf(TAG_INPUT, "Button %s short press", name);
 
     if (strcmp(name, "LEFT") == 0) {
-        display.previousPage();
+        controller.displayPreviousPage();
     } else if (strcmp(name, "RIGHT") == 0) {
-        display.nextPage();
+        controller.displayNextPage();
     } else if (strcmp(name, "BACK") == 0) {
-        display.setPage(DisplayUi::Page::Overview);
+        controller.displaySetPage(DisplayUi::Page::Overview);
     } else if (strcmp(name, "OK") == 0) {
         Logger::debug(TAG_INPUT, "OK button action is reserved for future menu selection");
     }
