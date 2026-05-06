@@ -32,6 +32,18 @@ void App::begin() {
         console.startTelnet();
     }
 
+    homeAssistant.begin(
+        MQTT_ENABLED,
+        MQTT_HOST,
+        MQTT_PORT,
+        MQTT_USER,
+        MQTT_PASSWORD,
+        MQTT_CLIENT_ID,
+        MQTT_BASE_TOPIC,
+        &state,
+        &controller
+    );
+
     hp.connect(&Serial1, IS_SECONDARY_CONTROLLER, AC_LIN_RX1_PIN, AC_LIN_TX1_PIN);
     hp.setDebug(AC_DEBUG);
 
@@ -54,6 +66,10 @@ void App::update() {
     if (network.isConnected()) {
         console.startTelnet();
     }
+    updateHeatPump();
+    updateIoExpanderInputs();
+
+    homeAssistant.update(network.isConnected());
     updateHeatPump();
     updateIoExpanderInputs();
 
@@ -129,6 +145,14 @@ void App::updateDeviceState() {
     state.display.ready = display.isReady();
     state.display.pageIndex = display.getPageIndex();
     state.display.pageName = display.getPageName();
+
+    state.homeAssistant.enabled = homeAssistant.isEnabled();
+    state.homeAssistant.connected = homeAssistant.isConnected();
+    state.homeAssistant.reconnectCount = homeAssistant.getReconnectCount();
+    state.homeAssistant.publishCount = homeAssistant.getPublishCount();
+    state.homeAssistant.commandCount = homeAssistant.getCommandCount();
+    state.homeAssistant.hasPublished = homeAssistant.hasPublished();
+    state.homeAssistant.lastPublishAgeMs = homeAssistant.getLastPublishAgeMs();
 }
 
 

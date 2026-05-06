@@ -56,6 +56,16 @@ struct DisplayStateSnapshot {
     const char* pageName = "";
 };
 
+struct HomeAssistantStateSnapshot {
+    bool enabled = false;
+    bool connected = false;
+    uint32_t reconnectCount = 0;
+    uint32_t publishCount = 0;
+    uint32_t commandCount = 0;
+    bool hasPublished = false;
+    unsigned long lastPublishAgeMs = 0;
+};
+
 struct DeviceState {
     bool wifiConnected = false;
     IPAddress ip;
@@ -65,6 +75,7 @@ struct DeviceState {
     VfdStateSnapshot vfd;
     InputStateSnapshot input;
     DisplayStateSnapshot display;
+    HomeAssistantStateSnapshot homeAssistant;
 
     unsigned long uptimeMs = 0;
 };

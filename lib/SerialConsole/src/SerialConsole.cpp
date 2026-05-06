@@ -915,6 +915,26 @@ void SerialConsole::printStateStatus() {
     println((int)state->display.pageIndex);
     print("Page name: ");
     println(state->display.pageName);
+    println();
+
+    println("[HOME ASSISTANT]");
+    print("MQTT enabled: ");
+    println(state->homeAssistant.enabled ? "YES" : "NO");
+    print("MQTT connected: ");
+    println(state->homeAssistant.connected ? "YES" : "NO");
+    print("Reconnects: ");
+    println(String(state->homeAssistant.reconnectCount));
+    print("Publishes: ");
+    println(String(state->homeAssistant.publishCount));
+    print("Commands: ");
+    println(String(state->homeAssistant.commandCount));
+    print("Last publish age: ");
+    if (state->homeAssistant.hasPublished) {
+        print(String(state->homeAssistant.lastPublishAgeMs));
+        println(" ms");
+    } else {
+        println("never");
+    }
     println("--------------------");
     println();
 }

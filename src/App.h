@@ -13,6 +13,7 @@
 #include "ButtonInput.h"
 #include "DeviceState.h"
 #include "DeviceController.h"
+#include "HomeAssistantBridge.h"
 
 // -=-=-=-=-= Pin definitions and settings -=-=-=-=-=-
 // AC LIN bus (Serial1)
@@ -71,6 +72,7 @@ private:
     DisplayUi display;
     DeviceState state;
     DeviceController controller;
+    HomeAssistantBridge homeAssistant;
     bool ioExpanderReady = false;
     int lastGpa5State = HIGH;
     int lastGpa6State = HIGH;
