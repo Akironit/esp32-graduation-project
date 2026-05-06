@@ -127,6 +127,7 @@ void HomeAssistantBridge::reconnect() {
     Logger::info(TAG_HA, "MQTT connected");
     reconnectCount++;
     publishAvailability(true);
+    publishDiscovery();
     subscribeCommands();
     publishState();
 }
@@ -171,6 +172,238 @@ void HomeAssistantBridge::publishAvailability(bool online) {
     publishTopic("status", online ? "online" : "offline", true);
 }
 
+void HomeAssistantBridge::publishDiscovery() {
+    if (discoveryPublished || state == nullptr) {
+        return;
+    }
+
+    publishSensorDiscovery("ip", "IP address", "state/ip");
+    publishSensorDiscovery("uptime", "Uptime", "state/uptime_ms", "duration", "ms", "measurement");
+    publishBinarySensorDiscovery("wifi", "Wi-Fi", "state/wifi", "connectivity", "online", "offline");
+
+    publishSwitchDiscovery("ac_power", "AC power", "state/ac/power", "cmd/ac/power");
+    publishBinarySensorDiscovery("ac_bound", "AC bound", "state/ac/bound", "connectivity");
+    publishNumberDiscovery("ac_temp", "AC temperature", "state/ac/temp", "cmd/ac/temp", 16, 30, 1, "C");
+    publishNumberDiscovery("ac_fan", "AC fan", "state/ac/fan", "cmd/ac/fan", 0, 4, 1);
+    publishSelectDiscovery("ac_mode", "AC mode", "state/ac/mode", "cmd/ac/mode", "[\"1\",\"2\",\"3\",\"4\",\"5\"]");
+    publishSensorDiscovery("ac_role", "AC role", "state/ac/role");
+
+    publishSensorDiscovery("temperature_count", "Temperature sensor count", "state/temp/count");
+
+    for (uint8_t i = 0; i < state->temperatures.sensorCount && i < TEMP_MAX_SENSORS; i++) {
+        char objectId[32];
+        char name[48];
+        char suffix[32];
+        snprintf(objectId, sizeof(objectId), "temperature_%u", i);
+        snprintf(name, sizeof(name), "Temperature %u", i);
+        snprintf(suffix, sizeof(suffix), "state/temp/%u", i);
+        publishSensorDiscovery(objectId, name, suffix, "temperature", "C", "measurement");
+    }
+
+    publishSensorDiscovery("vfd_last_action", "VFD last action", "state/vfd/last_action");
+    publishSensorDiscovery("vfd_requested_frequency", "VFD requested frequency", "state/vfd/requested_frequency", nullptr, "Hz", "measurement");
+    publishSensorDiscovery("vfd_requests", "VFD requests", "state/vfd/requests", nullptr, nullptr, "total_increasing");
+    publishSensorDiscovery("vfd_errors", "VFD errors", "state/vfd/errors", nullptr, nullptr, "total_increasing");
+    publishNumberDiscovery("vfd_frequency", "VFD frequency command", "state/vfd/requested_frequency", "cmd/vfd/hz", 0, 50, 1, "Hz");
+    publishSelectDiscovery("vfd_run", "VFD run command", "state/vfd/last_action", "cmd/vfd/run", "[\"fwd\",\"rev\",\"stop\"]");
+
+    publishSelectDiscovery(
+        "display_page",
+        "Display page",
+        "state/display/page",
+        "cmd/display/page",
+        "[\"overview\",\"temp\",\"ac\",\"network\",\"next\",\"prev\"]"
+    );
+
+    discoveryPublished = true;
+    Logger::info(TAG_HA, "MQTT discovery published");
+}
+
+void HomeAssistantBridge::publishSensorDiscovery(
+    const char* objectId,
+    const char* name,
+    const char* stateSuffix,
+    const char* deviceClass,
+    const char* unit,
+    const char* stateClass
+) {
+    char topic[128];
+    snprintf(topic, sizeof(topic), "%s/sensor/%s_%s/config", HA_DISCOVERY_PREFIX, baseTopic, objectId);
+
+    char payload[512];
+    snprintf(
+        payload,
+        sizeof(payload),
+        "{\"name\":\"%s\",\"unique_id\":\"%s_%s\",\"state_topic\":\"%s/%s\",\"availability_topic\":\"%s/status\",\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\"}%s%s%s}",
+        name,
+        baseTopic,
+        objectId,
+        baseTopic,
+        stateSuffix,
+        baseTopic,
+        baseTopic,
+        HA_DEVICE_NAME,
+        HA_DEVICE_MANUFACTURER,
+        HA_DEVICE_MODEL,
+        deviceClass != nullptr ? ",\"device_class\":\"" : "",
+        deviceClass != nullptr ? deviceClass : "",
+        deviceClass != nullptr ? "\"" : ""
+    );
+
+    if (unit != nullptr) {
+        const size_t length = strlen(payload);
+        snprintf(payload + length - 1, sizeof(payload) - length + 1, ",\"unit_of_measurement\":\"%s\"}", unit);
+    }
+
+    if (stateClass != nullptr) {
+        const size_t length = strlen(payload);
+        snprintf(payload + length - 1, sizeof(payload) - length + 1, ",\"state_class\":\"%s\"}", stateClass);
+    }
+
+    publishFullTopic(topic, payload, true);
+}
+
+void HomeAssistantBridge::publishBinarySensorDiscovery(
+    const char* objectId,
+    const char* name,
+    const char* stateSuffix,
+    const char* deviceClass,
+    const char* payloadOn,
+    const char* payloadOff
+) {
+    char topic[128];
+    snprintf(topic, sizeof(topic), "%s/binary_sensor/%s_%s/config", HA_DISCOVERY_PREFIX, baseTopic, objectId);
+
+    char payload[512];
+    snprintf(
+        payload,
+        sizeof(payload),
+        "{\"name\":\"%s\",\"unique_id\":\"%s_%s\",\"state_topic\":\"%s/%s\",\"availability_topic\":\"%s/status\",\"payload_on\":\"%s\",\"payload_off\":\"%s\",\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\"}%s%s%s}",
+        name,
+        baseTopic,
+        objectId,
+        baseTopic,
+        stateSuffix,
+        baseTopic,
+        payloadOn,
+        payloadOff,
+        baseTopic,
+        HA_DEVICE_NAME,
+        HA_DEVICE_MANUFACTURER,
+        HA_DEVICE_MODEL,
+        deviceClass != nullptr ? ",\"device_class\":\"" : "",
+        deviceClass != nullptr ? deviceClass : "",
+        deviceClass != nullptr ? "\"" : ""
+    );
+
+    publishFullTopic(topic, payload, true);
+}
+
+void HomeAssistantBridge::publishSwitchDiscovery(
+    const char* objectId,
+    const char* name,
+    const char* stateSuffix,
+    const char* commandSuffix
+) {
+    char topic[128];
+    snprintf(topic, sizeof(topic), "%s/switch/%s_%s/config", HA_DISCOVERY_PREFIX, baseTopic, objectId);
+
+    char payload[512];
+    snprintf(
+        payload,
+        sizeof(payload),
+        "{\"name\":\"%s\",\"unique_id\":\"%s_%s\",\"state_topic\":\"%s/%s\",\"command_topic\":\"%s/%s\",\"availability_topic\":\"%s/status\",\"payload_on\":\"ON\",\"payload_off\":\"OFF\",\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\"}}",
+        name,
+        baseTopic,
+        objectId,
+        baseTopic,
+        stateSuffix,
+        baseTopic,
+        commandSuffix,
+        baseTopic,
+        baseTopic,
+        HA_DEVICE_NAME,
+        HA_DEVICE_MANUFACTURER,
+        HA_DEVICE_MODEL
+    );
+
+    publishFullTopic(topic, payload, true);
+}
+
+void HomeAssistantBridge::publishNumberDiscovery(
+    const char* objectId,
+    const char* name,
+    const char* stateSuffix,
+    const char* commandSuffix,
+    int min,
+    int max,
+    int step,
+    const char* unit
+) {
+    char topic[128];
+    snprintf(topic, sizeof(topic), "%s/number/%s_%s/config", HA_DISCOVERY_PREFIX, baseTopic, objectId);
+
+    char payload[512];
+    snprintf(
+        payload,
+        sizeof(payload),
+        "{\"name\":\"%s\",\"unique_id\":\"%s_%s\",\"state_topic\":\"%s/%s\",\"command_topic\":\"%s/%s\",\"availability_topic\":\"%s/status\",\"min\":%d,\"max\":%d,\"step\":%d,\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\"}%s%s%s}",
+        name,
+        baseTopic,
+        objectId,
+        baseTopic,
+        stateSuffix,
+        baseTopic,
+        commandSuffix,
+        baseTopic,
+        min,
+        max,
+        step,
+        baseTopic,
+        HA_DEVICE_NAME,
+        HA_DEVICE_MANUFACTURER,
+        HA_DEVICE_MODEL,
+        unit != nullptr ? ",\"unit_of_measurement\":\"" : "",
+        unit != nullptr ? unit : "",
+        unit != nullptr ? "\"" : ""
+    );
+
+    publishFullTopic(topic, payload, true);
+}
+
+void HomeAssistantBridge::publishSelectDiscovery(
+    const char* objectId,
+    const char* name,
+    const char* stateSuffix,
+    const char* commandSuffix,
+    const char* optionsJson
+) {
+    char topic[128];
+    snprintf(topic, sizeof(topic), "%s/select/%s_%s/config", HA_DISCOVERY_PREFIX, baseTopic, objectId);
+
+    char payload[640];
+    snprintf(
+        payload,
+        sizeof(payload),
+        "{\"name\":\"%s\",\"unique_id\":\"%s_%s\",\"state_topic\":\"%s/%s\",\"command_topic\":\"%s/%s\",\"availability_topic\":\"%s/status\",\"options\":%s,\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\"}}",
+        name,
+        baseTopic,
+        objectId,
+        baseTopic,
+        stateSuffix,
+        baseTopic,
+        commandSuffix,
+        baseTopic,
+        optionsJson,
+        baseTopic,
+        HA_DEVICE_NAME,
+        HA_DEVICE_MANUFACTURER,
+        HA_DEVICE_MODEL
+    );
+
+    publishFullTopic(topic, payload, true);
+}
+
 void HomeAssistantBridge::publishTopic(const char* suffix, const char* value, bool retained) {
     if (!mqttClient.connected() || baseTopic == nullptr) {
         return;
@@ -178,7 +411,20 @@ void HomeAssistantBridge::publishTopic(const char* suffix, const char* value, bo
 
     char topic[96];
     snprintf(topic, sizeof(topic), "%s/%s", baseTopic, suffix);
-    mqttClient.publish(topic, value, retained);
+
+    if (!mqttClient.publish(topic, value, retained)) {
+        Logger::warningf(TAG_HA, "MQTT publish failed: %s", topic);
+    }
+}
+
+void HomeAssistantBridge::publishFullTopic(const char* topic, const char* value, bool retained) {
+    if (!mqttClient.connected()) {
+        return;
+    }
+
+    if (!mqttClient.publish(topic, value, retained)) {
+        Logger::warningf(TAG_HA, "MQTT publish failed: %s", topic);
+    }
 }
 
 void HomeAssistantBridge::publishTopicf(const char* suffix, const char* format, ...) {

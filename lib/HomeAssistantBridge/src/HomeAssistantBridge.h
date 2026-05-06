@@ -7,6 +7,34 @@
 #include "DeviceController.h"
 #include "DeviceState.h"
 
+// Home Assistant MQTT Discovery prefix. Default Home Assistant setting is "homeassistant".
+#ifndef HA_DISCOVERY_PREFIX
+#define HA_DISCOVERY_PREFIX "homeassistant"
+#endif
+
+// Device metadata shown in Home Assistant.
+#ifndef HA_DEVICE_NAME
+#define HA_DEVICE_NAME "Climate Controller"
+#endif
+
+#ifndef HA_DEVICE_MANUFACTURER
+#define HA_DEVICE_MANUFACTURER "Korolev Artem"
+#endif
+
+#ifndef HA_DEVICE_MODEL
+#define HA_DEVICE_MODEL "ESP32 Climate Controller"
+#endif
+
+// How often ESP32 publishes DeviceState values to MQTT.
+#ifndef HA_PUBLISH_INTERVAL_MS
+#define HA_PUBLISH_INTERVAL_MS 5000UL
+#endif
+
+// How often ESP32 retries MQTT connection when broker is unavailable.
+#ifndef HA_RECONNECT_INTERVAL_MS
+#define HA_RECONNECT_INTERVAL_MS 5000UL
+#endif
+
 class HomeAssistantBridge {
 public:
     void begin(
@@ -50,15 +78,57 @@ private:
     uint32_t publishCount = 0;
     uint32_t commandCount = 0;
     bool publishedOnce = false;
+    bool discoveryPublished = false;
 
-    static constexpr unsigned long RECONNECT_INTERVAL_MS = 5000;
-    static constexpr unsigned long PUBLISH_INTERVAL_MS = 5000;
+    static constexpr unsigned long RECONNECT_INTERVAL_MS = HA_RECONNECT_INTERVAL_MS;
+    static constexpr unsigned long PUBLISH_INTERVAL_MS = HA_PUBLISH_INTERVAL_MS;
     static HomeAssistantBridge* activeInstance;
 
     void reconnect();
     void publishState();
+    void publishDiscovery();
+    void publishSensorDiscovery(
+        const char* objectId,
+        const char* name,
+        const char* stateSuffix,
+        const char* deviceClass = nullptr,
+        const char* unit = nullptr,
+        const char* stateClass = nullptr
+    );
+    void publishBinarySensorDiscovery(
+        const char* objectId,
+        const char* name,
+        const char* stateSuffix,
+        const char* deviceClass = nullptr,
+        const char* payloadOn = "ON",
+        const char* payloadOff = "OFF"
+    );
+    void publishSwitchDiscovery(
+        const char* objectId,
+        const char* name,
+        const char* stateSuffix,
+        const char* commandSuffix
+    );
+    void publishNumberDiscovery(
+        const char* objectId,
+        const char* name,
+        const char* stateSuffix,
+        const char* commandSuffix,
+        int min,
+        int max,
+        int step,
+        const char* unit = nullptr
+    );
+    void publishSelectDiscovery(
+        const char* objectId,
+        const char* name,
+        const char* stateSuffix,
+        const char* commandSuffix,
+        const char* optionsJson
+    );
     void publishAvailability(bool online);
     void publishTopic(const char* suffix, const char* value, bool retained = false);
+    void publishFullTopic(const char* topic, const char* value, bool retained = false);
     void publishTopicf(const char* suffix, const char* format, ...);
     void subscribeCommands();
     void handleMessage(char* topic, byte* payload, unsigned int length);
