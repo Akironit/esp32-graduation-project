@@ -6,8 +6,12 @@
 namespace {
 constexpr const char* TAG_INPUT = "INPUT";
 constexpr const char* TAG_SETTINGS = "SETTINGS";
+constexpr const char* TAG_VFD_UI = "VFD_UI";
 constexpr unsigned long BUTTON_POLL_INTERVAL_MS = 10;
 constexpr unsigned long VFD_STATUS_POLL_INTERVAL_MS = 5000;
+constexpr unsigned long VFD_COMMAND_SYNC_INTERVAL_MS = 2500;
+constexpr unsigned long VFD_POLL_AFTER_COMMAND_GUARD_MS = 700;
+constexpr uint8_t VFD_COMMAND_SYNC_MAX_ATTEMPTS = 10;
 constexpr const char* SETTINGS_NAMESPACE = "climate";
 
 volatile bool mcpInterruptA = false;
@@ -88,7 +92,10 @@ void App::update() {
     updateHeatPump();
     updateIoExpanderInputs();
 
-    updateVfdStatus();
+    const bool vfdCommandSent = updateVfdCommandSync();
+    if (!vfdCommandSent) {
+        updateVfdStatus();
+    }
     updateHeatPump();
     updateIoExpanderInputs();
 
@@ -113,8 +120,90 @@ void App::updateVfdStatus() {
         return;
     }
 
+    if (now - lastVfdCommandSyncMs < VFD_POLL_AFTER_COMMAND_GUARD_MS) {
+        return;
+    }
+
     lastVfdStatusPollMs = now;
     vfd.pollStatus();
+}
+
+
+bool App::updateVfdCommandSync() {
+    if (!vfdCommandSyncActive || state.controllerState.mode != DeviceMode::Manual) {
+        return false;
+    }
+
+    if (isVfdDesiredStateReached()) {
+        Logger::tracef(
+            TAG_VFD_UI,
+            "VFD desired state reached after %u sync attempts",
+            vfdCommandSyncAttempts
+        );
+        vfdCommandSyncActive = false;
+        return false;
+    }
+
+    const unsigned long now = millis();
+    if (now - lastVfdCommandSyncMs < VFD_COMMAND_SYNC_INTERVAL_MS) {
+        return false;
+    }
+
+    if (vfdCommandSyncAttempts >= VFD_COMMAND_SYNC_MAX_ATTEMPTS) {
+        Logger::warningf(
+            TAG_VFD_UI,
+            "VFD sync stopped after %u attempts desiredPower=%u desiredStep=%u actualRunning=%u actualStep=%u actualHz=%.1f",
+            vfdCommandSyncAttempts,
+            state.settings.manualVfdPower ? 1 : 0,
+            state.settings.manualVfdStep,
+            vfd.isRunning() ? 1 : 0,
+            vfd.getActualStep(),
+            vfd.hasActualFrequency() ? vfd.getActualFrequencyHz() : -1.0f
+        );
+        vfdCommandSyncActive = false;
+        return false;
+    }
+
+    lastVfdCommandSyncMs = now;
+    vfdCommandSyncAttempts++;
+
+    Logger::tracef(
+        TAG_VFD_UI,
+        "VFD sync attempt=%u desiredPower=%u desiredStep=%u actualRunning=%u actualStep=%u actualHz=%.1f",
+        vfdCommandSyncAttempts,
+        state.settings.manualVfdPower ? 1 : 0,
+        state.settings.manualVfdStep,
+        vfd.isRunning() ? 1 : 0,
+        vfd.getActualStep(),
+        vfd.hasActualFrequency() ? vfd.getActualFrequencyHz() : -1.0f
+    );
+
+    if (!state.settings.manualVfdPower) {
+        controller.vfdStop();
+        return true;
+    }
+
+    if (!vfd.isRunning()) {
+        controller.vfdForward();
+        return true;
+    }
+
+    if (state.settings.manualVfdStep == 0) {
+        vfdCommandSyncActive = false;
+        return false;
+    }
+
+    const float desiredHz = vfdStepToHz(state.settings.manualVfdStep);
+    const bool frequencyMatches = vfd.hasActualFrequency()
+        && fabsf(vfd.getActualFrequencyHz() - desiredHz) <= 0.75f;
+
+    if (!frequencyMatches) {
+        controller.vfdSetFrequency(desiredHz);
+        return true;
+    }
+
+    controller.vfdForward();
+    return true;
 }
 
 
@@ -211,6 +300,8 @@ void App::updateDeviceState() {
     state.homeAssistant.commandCount = homeAssistant.getCommandCount();
     state.homeAssistant.hasPublished = homeAssistant.hasPublished();
     state.homeAssistant.lastPublishAgeMs = homeAssistant.getLastPublishAgeMs();
+
+    logVfdStateChanges();
 }
 
 
@@ -403,15 +494,98 @@ void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
             controller.setAcFanMode(action.uintValue);
             break;
         case DisplayUi::ActionType::VfdStop:
-            controller.vfdStop();
+            requestVfdCommandSync("display stop");
             break;
-        case DisplayUi::ActionType::VfdRunStep:
-            controller.vfdSetFrequency(action.floatValue);
-            controller.vfdForward();
+        case DisplayUi::ActionType::VfdForward:
+            requestVfdCommandSync("display forward");
+            break;
+        case DisplayUi::ActionType::VfdSetFrequency:
+            requestVfdCommandSync("display frequency");
             break;
         case DisplayUi::ActionType::None:
             break;
     }
+}
+
+
+void App::requestVfdCommandSync(const char* reason) {
+    vfdCommandSyncActive = true;
+    vfdCommandSyncAttempts = 0;
+    lastVfdCommandSyncMs = 0;
+    Logger::tracef(
+        TAG_VFD_UI,
+        "VFD sync requested: %s desiredPower=%u desiredStep=%u",
+        reason,
+        state.settings.manualVfdPower ? 1 : 0,
+        state.settings.manualVfdStep
+    );
+}
+
+
+bool App::isVfdDesiredStateReached() const {
+    if (!state.settings.manualVfdPower || state.settings.manualVfdStep == 0) {
+        if (!state.settings.manualVfdPower) {
+            return !vfd.isRunning() && (!vfd.hasActualFrequency() || vfd.getActualFrequencyHz() < 1.0f);
+        }
+
+        return vfd.isRunning();
+    }
+
+    const float desiredHz = vfdStepToHz(state.settings.manualVfdStep);
+    return vfd.isRunning()
+        && vfd.hasActualFrequency()
+        && fabsf(vfd.getActualFrequencyHz() - desiredHz) <= 0.75f;
+}
+
+
+float App::vfdStepToHz(uint8_t step) const {
+    if (step == 0) {
+        return 0.0f;
+    }
+
+    if (step >= 6) {
+        return 50.0f;
+    }
+
+    return 20.0f + (step - 1) * 6.0f;
+}
+
+
+void App::logVfdStateChanges() {
+    const int16_t actualFreq10 = state.vfd.hasActualFrequency
+        ? (int16_t)lroundf(state.vfd.actualFrequencyHz * 10.0f)
+        : INT16_MIN;
+
+    if (lastLoggedVfdDesiredPower == state.settings.manualVfdPower
+        && lastLoggedVfdDesiredStep == state.settings.manualVfdStep
+        && lastLoggedVfdRunning == state.vfd.running
+        && lastLoggedVfdActualStep == state.vfd.actualStep
+        && lastLoggedVfdActualFreq10 == actualFreq10
+        && lastLoggedVfdOnline == state.vfd.online
+        && lastLoggedVfdError == state.vfd.communicationError) {
+        return;
+    }
+
+    lastLoggedVfdDesiredPower = state.settings.manualVfdPower;
+    lastLoggedVfdDesiredStep = state.settings.manualVfdStep;
+    lastLoggedVfdRunning = state.vfd.running;
+    lastLoggedVfdActualStep = state.vfd.actualStep;
+    lastLoggedVfdActualFreq10 = actualFreq10;
+    lastLoggedVfdOnline = state.vfd.online;
+    lastLoggedVfdError = state.vfd.communicationError;
+
+    Logger::tracef(
+        TAG_VFD_UI,
+        "VFD state desiredPower=%u desiredStep=%u actualRunning=%u actualStep=%u actualHz=%.1f online=%u error=%u status=0x%04X",
+        state.settings.manualVfdPower ? 1 : 0,
+        state.settings.manualVfdStep,
+        state.vfd.running ? 1 : 0,
+        state.vfd.actualStep,
+        state.vfd.hasActualFrequency ? state.vfd.actualFrequencyHz : -1.0f,
+        state.vfd.online ? 1 : 0,
+        state.vfd.communicationError ? 1 : 0,
+        state.vfd.statusWord
+    );
 }
 
 

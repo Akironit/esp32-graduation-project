@@ -32,7 +32,8 @@ public:
         AcTemperature,
         AcFan,
         VfdStop,
-        VfdRunStep
+        VfdForward,
+        VfdSetFrequency
     };
 
     struct Action {

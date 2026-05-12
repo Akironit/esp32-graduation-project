@@ -191,7 +191,7 @@ void HomeAssistantBridge::publishState() {
 
     publishTopic("state/vfd/last_action", state->vfd.lastAction, true);
     publishTopic("state/vfd/online", state->vfd.online ? "online" : "offline", true);
-    publishTopic("state/vfd/link", state->vfd.communicationError || (state->vfd.everOnline && !state->vfd.online) ? "error" : (state->vfd.online ? "linked" : "waiting"), true);
+    publishTopic("state/vfd/link", state->vfd.communicationError ? "error" : ((state->vfd.everOnline || state->vfd.online) ? "linked" : "waiting"), true);
     publishTopic("state/vfd/run", state->vfd.statusWord == 0x0002 ? "rev" : (state->vfd.running ? "fwd" : "stop"), true);
     publishTopicf("state/vfd/status_word", "%u", state->vfd.statusWord);
     publishTopicf("state/vfd/requested_frequency", "%.2f", state->vfd.requestedFrequencyHz);

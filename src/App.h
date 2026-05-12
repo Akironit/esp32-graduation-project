@@ -61,6 +61,7 @@ private:
     void updateHeatPump();
     void updateDeviceState();
     void updateVfdStatus();
+    bool updateVfdCommandSync();
     void configureIoExpanderInputs();
     void updateIoExpanderInputs();
     void processIoExpanderPort();
@@ -69,6 +70,10 @@ private:
     void loadUserSettings();
     void saveUserSettings();
     void updateVentilationInputs(int gpa5State, int gpa6State, int gpa7State, int exhaustState);
+    void requestVfdCommandSync(const char* reason);
+    bool isVfdDesiredStateReached() const;
+    float vfdStepToHz(uint8_t step) const;
+    void logVfdStateChanges();
 
     FujiHeatPump hp;
     SerialConsole console;
@@ -93,6 +98,16 @@ private:
     unsigned long lastButtonPollMs = 0;
     uint32_t lastUptimeSecond = UINT32_MAX;
     unsigned long lastVfdStatusPollMs = 0;
+    unsigned long lastVfdCommandSyncMs = 0;
+    bool vfdCommandSyncActive = false;
+    uint16_t vfdCommandSyncAttempts = 0;
+    bool lastLoggedVfdDesiredPower = false;
+    uint8_t lastLoggedVfdDesiredStep = 255;
+    bool lastLoggedVfdRunning = false;
+    uint8_t lastLoggedVfdActualStep = 255;
+    int16_t lastLoggedVfdActualFreq10 = INT16_MIN;
+    bool lastLoggedVfdOnline = false;
+    bool lastLoggedVfdError = false;
     NetworkManager network{
         WIFI_SSID,
         WIFI_PASSWORD,

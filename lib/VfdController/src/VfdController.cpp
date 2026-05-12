@@ -264,6 +264,14 @@ uint32_t VfdController::queueReadHolding(uint16_t address, uint16_t count) {
         onError(error, token);
     }
 
+    Logger::tracef(
+        TAG_VFD,
+        "Queued read token=%lu address=0x%04X count=%u",
+        (unsigned long)token,
+        address,
+        count
+    );
+
     return token;
 }
 
@@ -284,6 +292,14 @@ uint32_t VfdController::queueWriteSingle(uint16_t address, uint16_t value) {
     if (error != SUCCESS) {
         onError(error, token);
     }
+
+    Logger::tracef(
+        TAG_VFD,
+        "Queued write token=%lu address=0x%04X value=0x%04X",
+        (unsigned long)token,
+        address,
+        value
+    );
 
     return token;
 }
@@ -364,6 +380,7 @@ void VfdController::onError(Error error, uint32_t token) {
     lastToken = token;
     lastErrorCode = (uint8_t)error;
     activitySeen = true;
+    communicationError = true;
     lastActivityMs = millis();
 
     Logger::errorf(

@@ -442,7 +442,7 @@ void DisplayUi::drawOverview(const DeviceState& state) {
     uint8_t shownAcMode = state.ac.mode;
     uint8_t shownAcTemp = state.ac.temperature;
     uint8_t shownAcFan = state.ac.fanMode;
-    bool shownVfdPower = state.vfd.commandedRunning || state.vfd.running || (state.vfd.hasActualFrequency && state.vfd.actualFrequencyHz >= 20.0f);
+    bool shownVfdPower = state.settings.manualVfdPower;
     uint8_t shownVfdStep = vfdStep(state.vfd);
 
     if (interactionMode == InteractionMode::Edit) {
@@ -530,10 +530,10 @@ void DisplayUi::drawOverview(const DeviceState& state) {
 
     const char* vfdLink = "Wait";
     uint16_t vfdLinkColor = COLOR_WARN;
-    if (state.vfd.communicationError || (state.vfd.everOnline && !state.vfd.online)) {
+    if (state.vfd.communicationError) {
         vfdLink = "Error";
         vfdLinkColor = COLOR_DANGER;
-    } else if (state.vfd.online) {
+    } else if (state.vfd.everOnline || state.vfd.online) {
         vfdLink = "Linked";
         vfdLinkColor = COLOR_OK;
     }
@@ -545,10 +545,8 @@ void DisplayUi::drawOverview(const DeviceState& state) {
     drawFontTextBox(31, 168, 170, 40, 16, "Step", 2, COLOR_MUTED);
     drawFreeTextBox(32, 212, 170, 38, 18, String(shownVfdStep) + "/6", valueFont, shownVfdStep > 0 ? COLOR_OK : COLOR_MUTED);
     drawFontTextBox(33, 168, 194, 38, 16, "Freq", 2, COLOR_MUTED);
-    const bool hasVfdFrequency = state.vfd.hasActualFrequency || state.vfd.hasRequestedFrequency;
-    const float vfdFrequency = state.vfd.commandedRunning && state.vfd.hasRequestedFrequency
-        ? state.vfd.requestedFrequencyHz
-        : (state.vfd.hasActualFrequency ? state.vfd.actualFrequencyHz : state.vfd.requestedFrequencyHz);
+    const bool hasVfdFrequency = state.vfd.hasActualFrequency;
+    const float vfdFrequency = state.vfd.actualFrequencyHz;
     drawFreeTextBox(34, 212, 192, 72, 18, hasVfdFrequency ? String(vfdFrequency, 0) + " Hz" : "-- Hz", valueFont, hasVfdFrequency ? COLOR_TEXT : COLOR_MUTED);
     drawOverviewSelection(state);
 }
@@ -956,10 +954,10 @@ void DisplayUi::enterEditMode(const DeviceState& state) {
             editValue = state.ac.fanMode > 4 ? 0 : state.ac.fanMode;
             break;
         case OverviewParam::VfdPower:
-            editValue = state.vfd.commandedRunning || state.vfd.running ? 1 : 0;
+            editValue = state.settings.manualVfdPower ? 1 : 0;
             break;
         case OverviewParam::VfdStep:
-            editValue = vfdStep(state.vfd);
+            editValue = state.settings.manualVfdStep;
             break;
         case OverviewParam::Count:
             editValue = 0;
@@ -1105,27 +1103,31 @@ DisplayUi::Action DisplayUi::applyEdit(DeviceState& state) {
             break;
         case OverviewParam::VfdPower:
             state.settings.manualVfdPower = editValue != 0;
+            if (state.settings.manualVfdPower && state.settings.manualVfdStep == 0) {
+                state.settings.manualVfdStep = 1;
+            }
             Logger::infof(TAG_UI, "VFD power setting: %s", state.settings.manualVfdPower ? "ON" : "OFF");
             action.settingsChanged = true;
             if (manualMode) {
                 if (!state.settings.manualVfdPower) {
                     action.type = ActionType::VfdStop;
-                } else if (state.settings.manualVfdStep > 0) {
-                    action.type = ActionType::VfdRunStep;
-                    action.uintValue = state.settings.manualVfdStep;
-                    action.floatValue = vfdStepToHz(state.settings.manualVfdStep);
+                } else {
+                    action.type = ActionType::VfdForward;
                 }
             }
             break;
         case OverviewParam::VfdStep:
             state.settings.manualVfdStep = (uint8_t)editValue;
+            if (state.settings.manualVfdStep == 0) {
+                state.settings.manualVfdPower = false;
+            }
             Logger::infof(TAG_UI, "VFD step setting: %u", state.settings.manualVfdStep);
             action.settingsChanged = true;
             if (manualMode) {
                 if (state.settings.manualVfdStep == 0) {
                     action.type = ActionType::VfdStop;
-                } else if (state.settings.manualVfdPower) {
-                    action.type = ActionType::VfdRunStep;
+                } else {
+                    action.type = ActionType::VfdSetFrequency;
                     action.uintValue = state.settings.manualVfdStep;
                     action.floatValue = vfdStepToHz(state.settings.manualVfdStep);
                 }
@@ -1399,29 +1401,5 @@ uint16_t DisplayUi::activityColor(ControllerActivity activity) const {
 }
 
 uint8_t DisplayUi::vfdStep(const VfdStateSnapshot& vfd) const {
-    if (vfd.commandedRunning && vfd.hasRequestedFrequency) {
-        if (vfd.requestedFrequencyHz <= 20.0f) {
-            return 1;
-        }
-
-        if (vfd.requestedFrequencyHz >= 50.0f) {
-            return 6;
-        }
-
-        return 1 + (uint8_t)((vfd.requestedFrequencyHz - 20.0f) / 6.0f);
-    }
-
-    if (!vfd.hasRequestedFrequency || strcmp(vfd.lastAction, "stop") == 0 || strcmp(vfd.lastAction, "none") == 0) {
-        return vfd.hasActualFrequency ? vfd.actualStep : 0;
-    }
-
-    if (vfd.requestedFrequencyHz <= 20.0f) {
-        return 1;
-    }
-
-    if (vfd.requestedFrequencyHz >= 50.0f) {
-        return 6;
-    }
-
-    return 1 + (uint8_t)((vfd.requestedFrequencyHz - 20.0f) / 6.0f);
+    return vfd.hasActualFrequency ? vfd.actualStep : 0;
 }
