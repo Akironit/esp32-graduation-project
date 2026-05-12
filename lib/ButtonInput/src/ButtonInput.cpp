@@ -7,6 +7,7 @@ void ButtonInput::begin(bool activeLow, unsigned long debounceMs, unsigned long 
 
     rawState = false;
     debouncedState = false;
+    longPressFired = false;
     lastRawChangeMs = 0;
     pressedSinceMs = 0;
 }
@@ -26,11 +27,17 @@ ButtonInput::Event ButtonInput::update(bool rawPressed, unsigned long nowMs) {
 
         if (debouncedState) {
             pressedSinceMs = nowMs;
+            longPressFired = false;
             return Event::None;
         }
 
         const unsigned long pressDurationMs = nowMs - pressedSinceMs;
-        return pressDurationMs >= longPressMs ? Event::LongPress : Event::ShortPress;
+        return pressDurationMs >= longPressMs || longPressFired ? Event::None : Event::ShortPress;
+    }
+
+    if (debouncedState && !longPressFired && nowMs - pressedSinceMs >= longPressMs) {
+        longPressFired = true;
+        return Event::LongPress;
     }
 
     return Event::None;

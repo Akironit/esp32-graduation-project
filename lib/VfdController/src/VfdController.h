@@ -21,14 +21,25 @@ public:
     void stop();
 
     void setFrequency(float hz);
+    void pollStatus();
 
     void readRegister(uint16_t address, uint16_t count);
     void writeRegister(uint16_t address, uint16_t value);
 
     bool isInitialized() const;
+    bool isOnline() const;
+    bool hasEverBeenOnline() const;
+    bool hasCommunicationError() const;
+    bool hasStatusWord() const;
+    uint16_t getStatusWord() const;
+    bool isRunning() const;
+    bool isCommandedRunning() const;
     const char* getLastAction() const;
     bool hasRequestedFrequency() const;
     float getRequestedFrequencyHz() const;
+    bool hasActualFrequency() const;
+    float getActualFrequencyHz() const;
+    uint8_t getActualStep() const;
     uint32_t getRequestCount() const;
     uint32_t getOkCount() const;
     uint32_t getErrorCount() const;
@@ -44,18 +55,32 @@ private:
     const char* lastAction = "none";
     bool requestedFrequencySet = false;
     float requestedFrequencyHz = 0.0f;
+    bool statusWordSet = false;
+    uint16_t statusWord = 0;
+    bool running = false;
+    bool commandedRunning = false;
+    bool actualFrequencySet = false;
+    float actualFrequencyHz = 0.0f;
+    uint8_t actualStep = 0;
     uint32_t requestCount = 0;
     uint32_t okCount = 0;
     uint32_t errorCount = 0;
     uint32_t lastToken = 0;
     uint8_t lastErrorCode = 0;
     bool activitySeen = false;
+    bool everOnline = false;
+    bool communicationError = false;
     unsigned long lastActivityMs = 0;
+    unsigned long lastOkMs = 0;
+    uint32_t statusWordToken = 0;
+    uint32_t monitorFrequencyToken = 0;
+    bool pollFrequencyNext = false;
 
     uint32_t nextToken();
+    uint8_t frequencyToStep(float hz) const;
 
-    void queueReadHolding(uint16_t address, uint16_t count);
-    void queueWriteSingle(uint16_t address, uint16_t value);
+    uint32_t queueReadHolding(uint16_t address, uint16_t count);
+    uint32_t queueWriteSingle(uint16_t address, uint16_t value);
 
     void onData(ModbusMessage msg, uint32_t token);
     void onError(Error error, uint32_t token);

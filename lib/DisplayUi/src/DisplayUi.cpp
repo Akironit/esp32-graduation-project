@@ -4,6 +4,7 @@
 
 namespace {
 constexpr const char* TAG_DISPLAY = "DISPLAY";
+constexpr const char* TAG_UI = "UI";
 
 constexpr uint16_t COLOR_BG = TFT_BLACK;
 constexpr uint16_t COLOR_PANEL = 0x1082;
@@ -80,6 +81,7 @@ void DisplayUi::setPage(Page page) {
     }
 
     currentPage = page;
+    interactionMode = InteractionMode::View;
     dirty = true;
     fullRedraw = true;
 }
@@ -96,10 +98,103 @@ const char* DisplayUi::getPageName() const {
     return getPageName(currentPage);
 }
 
+DisplayUi::Action DisplayUi::handleButton(Button button, bool longPress, DeviceState& state) {
+    if (longPress && button == Button::Back) {
+        currentPage = Page::Overview;
+        interactionMode = InteractionMode::View;
+        dirty = true;
+        fullRedraw = true;
+        Logger::debug(TAG_UI, "Long BACK: return to Overview");
+        return {};
+    }
+
+    if (interactionMode == InteractionMode::View) {
+        if (longPress) {
+            return {};
+        }
+
+        switch (button) {
+            case Button::Left:
+                previousPage();
+                Logger::debug(TAG_UI, "Page previous");
+                break;
+            case Button::Right:
+                nextPage();
+                Logger::debug(TAG_UI, "Page next");
+                break;
+            case Button::Ok:
+                if (currentPage == Page::Overview) {
+                    enterSelectMode(state);
+                } else {
+                    Logger::debug(TAG_UI, "OK ignored: page has no editable parameters yet");
+                }
+                break;
+            case Button::Back:
+                if (currentPage != Page::Overview) {
+                    currentPage = Page::Overview;
+                    dirty = true;
+                    fullRedraw = true;
+                    Logger::debug(TAG_UI, "BACK: return to Overview");
+                }
+                break;
+        }
+        return {};
+    }
+
+    if (longPress) {
+        return {};
+    }
+
+    if (interactionMode == InteractionMode::Select) {
+        switch (button) {
+            case Button::Left:
+                moveSelection(state, -1);
+                break;
+            case Button::Right:
+                moveSelection(state, 1);
+                break;
+            case Button::Ok:
+                enterEditMode(state);
+                break;
+            case Button::Back:
+                interactionMode = InteractionMode::View;
+                dirty = true;
+                fullRedraw = true;
+                Logger::debug(TAG_UI, "Selection canceled");
+                break;
+        }
+        return {};
+    }
+
+    if (interactionMode == InteractionMode::Edit) {
+        switch (button) {
+            case Button::Left:
+                changeEditValue(-1);
+                break;
+            case Button::Right:
+                changeEditValue(1);
+                break;
+            case Button::Ok:
+                return applyEdit(state);
+            case Button::Back:
+                cancelEdit(state);
+                break;
+        }
+    }
+
+    return {};
+}
+
 void DisplayUi::render(const DeviceState& state) {
     if (fullRedraw) {
         tft.fillScreen(COLOR_BG);
         resetLineCache();
+        headerStatusCached = false;
+        lastInteractionLabel = nullptr;
+        lastFooterText[0] = '\0';
+        lastUptimeText[0] = '\0';
+        lastWarningCount = 255;
+        lastErrorCount = 255;
     }
 
     drawHeader(state, getPageName());
@@ -109,23 +204,20 @@ void DisplayUi::render(const DeviceState& state) {
         case Page::Overview:
             drawOverview(state);
             break;
-        case Page::Temperatures:
-            drawTemperatures(state.temperatures);
-            break;
         case Page::AirConditioner:
             drawAirConditioner(state.ac);
             break;
-        case Page::Network:
-            drawNetwork(state);
+        case Page::Ventilation:
+            drawVentilation(state);
             break;
-        case Page::FontTest1:
-            drawFontTest1();
+        case Page::Temperatures:
+            drawTemperatures(state.temperatures);
             break;
-        case Page::FontTest2:
-            drawFontTest2();
+        case Page::Settings:
+            drawSettings(state);
             break;
-        case Page::FontTest3:
-            drawFontTest3();
+        case Page::Diagnostics:
+            drawDiagnostics(state);
             break;
         case Page::Count:
             break;
@@ -145,8 +237,30 @@ void DisplayUi::drawHeader(const DeviceState& state, const char* title) {
         tft.drawFastHLine(0, HEADER_H, 320, COLOR_TITLE);
     }
 
-    drawWifiIcon(268, 10, state.wifiConnected ? COLOR_OK : COLOR_DANGER);
-    drawHomeAssistantIcon(304, 10, state.homeAssistant.connected ? COLOR_OK : COLOR_DANGER);
+    const char* label = interactionLabel();
+    const bool editLabel = interactionMode == InteractionMode::Edit;
+    if (fullRedraw || label != lastInteractionLabel || editLabel != lastInteractionEdit) {
+        lastInteractionLabel = label;
+        lastInteractionEdit = editLabel;
+        tft.fillRect(174, 1, 74, 18, COLOR_PANEL);
+        if (label[0] != '\0') {
+            tft.setFreeFont(&FreeMono9pt7b);
+            tft.setTextColor(editLabel ? COLOR_TITLE : COLOR_ACCENT, COLOR_PANEL);
+            tft.drawString(label, 176, 4);
+        }
+    }
+
+    if (fullRedraw || !headerStatusCached || state.wifiConnected != lastHeaderWifiConnected) {
+        lastHeaderWifiConnected = state.wifiConnected;
+        drawWifiIcon(268, 10, state.wifiConnected ? COLOR_OK : COLOR_DANGER);
+    }
+
+    if (fullRedraw || !headerStatusCached || state.homeAssistant.connected != lastHeaderHaConnected) {
+        lastHeaderHaConnected = state.homeAssistant.connected;
+        drawHomeAssistantIcon(304, 10, state.homeAssistant.connected ? COLOR_OK : COLOR_DANGER);
+    }
+
+    headerStatusCached = true;
 }
 
 void DisplayUi::drawFooter(const DeviceState& state) {
@@ -161,6 +275,12 @@ void DisplayUi::drawFooter(const DeviceState& state) {
 
     if (fullRedraw) {
         tft.fillRect(0, FOOTER_Y, 320, FOOTER_H, COLOR_PANEL);
+    }
+
+    if (strcmp(lastFooterText, footer) != 0) {
+        strncpy(lastFooterText, footer, sizeof(lastFooterText));
+        lastFooterText[sizeof(lastFooterText) - 1] = '\0';
+        tft.fillRect(8, FOOTER_Y + 8, 30, 10, COLOR_PANEL);
         tft.setFreeFont(nullptr);
         tft.setTextFont(1);
         tft.setTextSize(1);
@@ -168,17 +288,29 @@ void DisplayUi::drawFooter(const DeviceState& state) {
         tft.drawString(footer, 8, FOOTER_Y + 8);
     }
 
-    drawWarningIcon(52, FOOTER_Y + 12, state.controllerState.warningCount);
-    drawErrorIcon(98, FOOTER_Y + 12, state.controllerState.errorCount);
+    if (lastWarningCount != state.controllerState.warningCount) {
+        lastWarningCount = state.controllerState.warningCount;
+        drawWarningIcon(52, FOOTER_Y + 12, state.controllerState.warningCount);
+    }
+
+    if (lastErrorCount != state.controllerState.errorCount) {
+        lastErrorCount = state.controllerState.errorCount;
+        drawErrorIcon(98, FOOTER_Y + 12, state.controllerState.errorCount);
+    }
 
     String uptime = String("Up ") + state.uptimeText;
     uptime.toUpperCase();
-    tft.fillRect(224, FOOTER_Y + 6, 88, 12, COLOR_PANEL);
-    tft.setFreeFont(nullptr);
-    tft.setTextFont(1);
-    tft.setTextSize(1);
-    tft.setTextColor(COLOR_MUTED, COLOR_PANEL);
-    tft.drawString(uptime, 226, FOOTER_Y + 8);
+    if (strncmp(lastUptimeText, uptime.c_str(), sizeof(lastUptimeText)) != 0) {
+        strncpy(lastUptimeText, uptime.c_str(), sizeof(lastUptimeText));
+        lastUptimeText[sizeof(lastUptimeText) - 1] = '\0';
+        tft.fillRect(250, FOOTER_Y + 6, 62, 12, COLOR_PANEL);
+        tft.setFreeFont(nullptr);
+        tft.setTextFont(1);
+        tft.setTextSize(1);
+        tft.setTextColor(COLOR_MUTED, COLOR_PANEL);
+        tft.drawString("UP", 226, FOOTER_Y + 8);
+        tft.drawString(state.uptimeText, 250, FOOTER_Y + 8);
+    }
 }
 
 void DisplayUi::resetLineCache() {
@@ -304,15 +436,54 @@ void DisplayUi::drawOverview(const DeviceState& state) {
 
     const GFXfont* labelFont = &FreeMono9pt7b;
     const GFXfont* valueFont = &FreeMonoBold9pt7b;
+    DeviceMode shownMode = state.controllerState.mode;
+    float shownSetTemp = state.environment.targetIndoorTempC;
+    bool shownAcPower = state.ac.powerOn;
+    uint8_t shownAcMode = state.ac.mode;
+    uint8_t shownAcTemp = state.ac.temperature;
+    uint8_t shownAcFan = state.ac.fanMode;
+    bool shownVfdPower = state.vfd.commandedRunning || state.vfd.running || (state.vfd.hasActualFrequency && state.vfd.actualFrequencyHz >= 20.0f);
+    uint8_t shownVfdStep = vfdStep(state.vfd);
+
+    if (interactionMode == InteractionMode::Edit) {
+        switch (selectedParam) {
+            case OverviewParam::Mode:
+                shownMode = editValue == 0 ? DeviceMode::Auto : (editValue == 1 ? DeviceMode::Manual : DeviceMode::Disabled);
+                break;
+            case OverviewParam::SetTemp:
+                shownSetTemp = editValue / 2.0f;
+                break;
+            case OverviewParam::AcPower:
+                shownAcPower = editValue != 0;
+                break;
+            case OverviewParam::AcMode:
+                shownAcMode = acModeFromListIndex((uint8_t)editValue);
+                break;
+            case OverviewParam::AcTemp:
+                shownAcTemp = (uint8_t)editValue;
+                break;
+            case OverviewParam::AcFan:
+                shownAcFan = (uint8_t)editValue;
+                break;
+            case OverviewParam::VfdPower:
+                shownVfdPower = editValue != 0;
+                break;
+            case OverviewParam::VfdStep:
+                shownVfdStep = (uint8_t)editValue;
+                break;
+            case OverviewParam::Count:
+                break;
+        }
+    }
 
     drawFreeTextBox(0, 14, 36, 58, 18, "MODE:", labelFont, COLOR_MUTED);
-    drawTextBox(1, 78, 32, 72, deviceModeName(state.controllerState.mode), deviceModeColor(state.controllerState.mode), 4);
+    drawTextBox(1, 78, 32, 72, deviceModeName(shownMode), deviceModeColor(shownMode), 4);
     drawFreeTextBox(2, 14, 70, 70, 18, "State:", labelFont, COLOR_MUTED);
     drawFreeTextBox(3, 14, 88, 104, 18, activityName(state.controllerState.activity), valueFont, activityColor(state.controllerState.activity));
     drawActivityIcon(136, 96, state.controllerState.activity);
 
     drawFontTextBox(4, 168, 32, 44, 16, "Hood", 2, COLOR_ACCENT);
-    drawFreeTextBox(5, 214, 34, 20, 16, String(state.environment.kitchenHoodLevel), valueFont, COLOR_TEXT);
+    drawFreeTextBox(5, 214, 34, 20, 16, String(state.environment.kitchenHoodLevel), valueFont, state.environment.kitchenHoodLevel > 0 ? COLOR_OK : COLOR_TEXT);
     drawFontTextBox(6, 250, 32, 34, 16, "EXH", 2, COLOR_ACCENT);
     drawFreeTextBox(7, 286, 34, 30, 16, state.environment.exhaustVentEnabled ? "ON " : "OFF", valueFont, state.environment.exhaustVentEnabled ? COLOR_OK : COLOR_MUTED);
     drawFreeTextBox(8, 168, 54, 132, 18, "Temperature", labelFont, COLOR_MUTED);
@@ -320,7 +491,7 @@ void DisplayUi::drawOverview(const DeviceState& state) {
     const String indoorText = state.environment.hasIndoorTemp ? formatFloat(state.environment.indoorTempC, 1) + "C" : "--.-C";
     const String outdoorText = state.environment.hasOutdoorTemp ? formatFloat(state.environment.outdoorTempC, 1) + "C" : "--.-C";
     const float delta = state.environment.hasIndoorTemp
-        ? state.environment.indoorTempC - state.environment.targetIndoorTempC
+        ? state.environment.indoorTempC - shownSetTemp
         : 0.0f;
     const float deltaAbs = delta < 0.0f ? -delta : delta;
     const String deltaText = state.environment.hasIndoorTemp
@@ -332,7 +503,7 @@ void DisplayUi::drawOverview(const DeviceState& state) {
     drawFontTextBox(11, 244, 76, 28, 16, "Out", 2, COLOR_ACCENT);
     drawFontTextBox(12, 274, 76, 42, 16, outdoorText, 2, state.environment.hasOutdoorTemp ? COLOR_TEXT : COLOR_WARN);
     drawFontTextBox(13, 168, 96, 28, 16, "Set", 2, COLOR_ACCENT);
-    drawFontTextBox(14, 198, 96, 50, 16, String(state.environment.targetIndoorTempC, 1) + "C", 2, COLOR_TEXT);
+    drawFontTextBox(14, 198, 96, 50, 16, String(shownSetTemp, 1) + "C", 2, COLOR_TEXT);
     drawFontTextBox(15, 250, 96, 32, 16, "Dlt", 2, COLOR_ACCENT);
     drawFontTextBox(16, 282, 96, 34, 16, deltaText, 2, deltaAbs <= state.environment.targetToleranceC ? COLOR_OK : COLOR_WARN);
 
@@ -349,27 +520,37 @@ void DisplayUi::drawOverview(const DeviceState& state) {
     drawFreeTextBox(17, 14, 128, 34, 18, "AC:", labelFont, COLOR_ACCENT);
     drawFreeTextBox(18, 52, 128, 96, 18, acLink, valueFont, acLinkColor);
     drawFontTextBox(19, 14, 150, 50, 16, "Power", 2, COLOR_MUTED);
-    drawFreeTextBox(20, 68, 150, 36, 18, state.ac.powerOn ? "ON " : "OFF", valueFont, state.ac.powerOn ? COLOR_OK : COLOR_MUTED);
+    drawFreeTextBox(20, 68, 150, 36, 18, shownAcPower ? "ON " : "OFF", valueFont, shownAcPower ? COLOR_OK : COLOR_MUTED);
     drawFontTextBox(21, 14, 170, 42, 16, "Mode", 2, COLOR_MUTED);
-    drawFreeTextBox(22, 62, 170, 82, 18, acModeTitle(state.ac.mode), valueFont, state.ac.powerOn ? activityColor(ControllerActivity::AcCool) : COLOR_MUTED);
+    drawFreeTextBox(22, 62, 170, 82, 18, acModeTitle(shownAcMode), valueFont, shownAcPower ? activityColor(ControllerActivity::AcCool) : COLOR_MUTED);
     drawFontTextBox(23, 14, 194, 24, 16, "Set", 2, COLOR_MUTED);
-    drawFreeTextBox(24, 42, 192, 36, 18, String(state.ac.temperature) + "C", valueFont, COLOR_TEXT);
+    drawFreeTextBox(24, 42, 192, 36, 18, String(shownAcTemp) + "C", valueFont, COLOR_TEXT);
     drawFontTextBox(25, 82, 194, 24, 16, "Fan", 2, COLOR_MUTED);
-    drawFreeTextBox(26, 110, 192, 44, 18, acFanTitle(state.ac.fanMode), valueFont, COLOR_TEXT);
+    drawFreeTextBox(26, 110, 192, 44, 18, acFanTitle(shownAcFan), valueFont, COLOR_TEXT);
 
-    const uint8_t step = vfdStep(state.vfd);
-    const bool vfdRunning = step > 0 && strcmp(state.vfd.lastAction, "stop") != 0;
-    const char* vfdLink = state.vfd.initialized ? "Linked" : "Wait";
-    const uint16_t vfdLinkColor = state.vfd.initialized ? COLOR_OK : COLOR_WARN;
+    const char* vfdLink = "Wait";
+    uint16_t vfdLinkColor = COLOR_WARN;
+    if (state.vfd.communicationError || (state.vfd.everOnline && !state.vfd.online)) {
+        vfdLink = "Error";
+        vfdLinkColor = COLOR_DANGER;
+    } else if (state.vfd.online) {
+        vfdLink = "Linked";
+        vfdLinkColor = COLOR_OK;
+    }
 
     drawFreeTextBox(27, 168, 128, 46, 18, "VFD:", labelFont, COLOR_ACCENT);
     drawFreeTextBox(28, 218, 128, 90, 18, vfdLink, valueFont, vfdLinkColor);
     drawFontTextBox(29, 168, 150, 50, 16, "Power", 2, COLOR_MUTED);
-    drawFreeTextBox(30, 224, 150, 40, 18, vfdRunning ? "ON " : "OFF", valueFont, vfdRunning ? COLOR_OK : COLOR_MUTED);
+    drawFreeTextBox(30, 224, 150, 40, 18, shownVfdPower ? "ON " : "OFF", valueFont, shownVfdPower ? COLOR_OK : COLOR_MUTED);
     drawFontTextBox(31, 168, 170, 40, 16, "Step", 2, COLOR_MUTED);
-    drawFreeTextBox(32, 212, 170, 38, 18, String(step) + "/6", valueFont, step > 0 ? COLOR_OK : COLOR_MUTED);
+    drawFreeTextBox(32, 212, 170, 38, 18, String(shownVfdStep) + "/6", valueFont, shownVfdStep > 0 ? COLOR_OK : COLOR_MUTED);
     drawFontTextBox(33, 168, 194, 38, 16, "Freq", 2, COLOR_MUTED);
-    drawFreeTextBox(34, 212, 192, 72, 18, state.vfd.hasRequestedFrequency ? String(state.vfd.requestedFrequencyHz, 0) + " Hz" : "-- Hz", valueFont, state.vfd.hasRequestedFrequency ? COLOR_TEXT : COLOR_MUTED);
+    const bool hasVfdFrequency = state.vfd.hasActualFrequency || state.vfd.hasRequestedFrequency;
+    const float vfdFrequency = state.vfd.commandedRunning && state.vfd.hasRequestedFrequency
+        ? state.vfd.requestedFrequencyHz
+        : (state.vfd.hasActualFrequency ? state.vfd.actualFrequencyHz : state.vfd.requestedFrequencyHz);
+    drawFreeTextBox(34, 212, 192, 72, 18, hasVfdFrequency ? String(vfdFrequency, 0) + " Hz" : "-- Hz", valueFont, hasVfdFrequency ? COLOR_TEXT : COLOR_MUTED);
+    drawOverviewSelection(state);
 }
 
 void DisplayUi::drawTemperatures(const TemperatureStateSnapshot& temperatures) {
@@ -456,7 +637,19 @@ void DisplayUi::drawAirConditioner(const AcStateSnapshot& ac) {
     );
 }
 
-void DisplayUi::drawNetwork(const DeviceState& state) {
+void DisplayUi::drawVentilation(const DeviceState& state) {
+    if (fullRedraw) {
+        drawPanel(10, 42, 300, 64, state.environment.exhaustVentEnabled ? COLOR_OK : COLOR_MUTED);
+        drawPanel(10, 116, 300, 92, COLOR_ACCENT);
+    }
+
+    drawTextBox(0, 20, 52, 275, "VENTILATION", COLOR_MUTED, 1);
+    drawTextBox(1, 20, 72, 275, state.environment.exhaustVentEnabled ? "exhaust enabled" : "exhaust off", statusColor(state.environment.exhaustVentEnabled), 2);
+    drawTextBox(2, 20, 128, 275, "Supply control is available on Overview", COLOR_TEXT, 2);
+    drawTextBox(3, 20, 154, 275, "Manual VFD page will be expanded later", COLOR_MUTED, 2);
+}
+
+void DisplayUi::drawSettings(const DeviceState& state) {
     if (fullRedraw) {
         drawPanel(10, 42, 145, 64, state.wifiConnected ? COLOR_OK : COLOR_DANGER);
         drawPanel(165, 42, 145, 64, state.homeAssistant.connected ? COLOR_OK : COLOR_DANGER);
@@ -474,99 +667,42 @@ void DisplayUi::drawNetwork(const DeviceState& state) {
     drawTextBox(5, 20, 178, 275, "OTA ready  Uptime " + String(state.uptimeText), COLOR_MUTED, 2);
 }
 
-void DisplayUi::drawFontTest1() {
-    if (!fullRedraw) {
-        return;
-    }
-
+void DisplayUi::drawDiagnostics(const DeviceState& state) {
     if (fullRedraw) {
-        tft.drawFastHLine(8, 48, 304, COLOR_LINE);
-        tft.drawFastHLine(8, 98, 304, COLOR_LINE);
-        tft.drawFastHLine(8, 154, 304, COLOR_LINE);
+        drawPanel(10, 42, 300, 64, state.controllerState.errorCount == 0 ? COLOR_OK : COLOR_DANGER);
+        drawPanel(10, 116, 300, 92, COLOR_WARN);
     }
 
-    drawTextBox(0, 10, 28, 300, "F1 regular: ABC abc 123 +-*/", COLOR_TEXT, 1);
-    drawLabel(1, 10, 44, 140, "F1 bold simulated");
-
-    drawTextBox(2, 10, 62, 300, "F2 regular: ABC abc 123 +-*/", COLOR_TEXT, 2);
-    drawBoldText(10, 84, "F2 bold simulated", COLOR_TITLE, COLOR_BG, 2);
-
-    drawTextBox(3, 10, 112, 300, "F4 regular: ABC 123", COLOR_TEXT, 4);
-    drawBoldText(10, 138, "F4 bold", COLOR_OK, COLOR_BG, 4);
-
-    drawTextBox(4, 10, 184, 300, "Native italic/underline/strike: no", COLOR_WARN, 2);
+    drawTextBox(0, 20, 52, 275, "DIAGNOSTICS", COLOR_MUTED, 1);
+    drawTextBox(1, 20, 72, 275, "Warn " + String(state.controllerState.warningCount) + "  Err " + String(state.controllerState.errorCount), COLOR_TEXT, 2);
+    drawTextBox(2, 20, 128, 275, "AC frame " + String(state.ac.hasReceivedFrame ? state.ac.lastFrameAgeMs : 0) + " ms", state.ac.hasReceivedFrame ? COLOR_TEXT : COLOR_WARN, 2);
+    drawTextBox(3, 20, 154, 275, "VFD ok " + String(state.vfd.okCount) + "  err " + String(state.vfd.errorCount), COLOR_MUTED, 2);
 }
 
-void DisplayUi::drawFontTest2() {
-    if (!fullRedraw) {
-        return;
-    }
-
+void DisplayUi::drawPlaceholder(const char* title, const char* line1, const char* line2) {
     if (fullRedraw) {
-        tft.drawFastHLine(8, 70, 304, COLOR_LINE);
-        tft.drawFastHLine(8, 150, 304, COLOR_LINE);
+        drawPanel(10, 56, 300, 118, COLOR_ACCENT);
     }
 
-    drawTextBox(0, 10, 30, 300, "F6: 123", COLOR_TEXT, 6);
-    drawTextBox(1, 130, 30, 180, "big digits", COLOR_MUTED, 2);
-
-    drawTextBox(2, 10, 86, 300, "F7: 12:34", COLOR_ACCENT, 7);
-    drawTextBox(3, 10, 166, 300, "F8: 123", COLOR_TITLE, 8);
-}
-
-void DisplayUi::drawFontTest3() {
-    if (!fullRedraw) {
-        return;
-    }
-
-    tft.drawFastHLine(8, 58, 304, COLOR_LINE);
-    tft.drawFastHLine(8, 112, 304, COLOR_LINE);
-    tft.drawFastHLine(8, 166, 304, COLOR_LINE);
-
-    tft.setTextColor(COLOR_ACCENT, COLOR_BG);
-    tft.setFreeFont(&FreeSans9pt7b);
-    tft.drawString("FF17 Sans9 regular", 10, 30);
-    tft.setFreeFont(&FreeSansBold9pt7b);
-    tft.drawString("FF21 Sans9 bold", 170, 30);
-
-    tft.setTextColor(COLOR_TEXT, COLOR_BG);
-    tft.setFreeFont(&FreeSansOblique9pt7b);
-    tft.drawString("FF25 Sans9 oblique", 10, 82);
-    tft.setFreeFont(&FreeSansBoldOblique9pt7b);
-    tft.drawString("FF29 bold oblique", 170, 82);
-
-    tft.setTextColor(COLOR_TITLE, COLOR_BG);
-    tft.setFreeFont(&FreeMono9pt7b);
-    tft.drawString("FF1 Mono9", 10, 136);
-    tft.setFreeFont(&FreeMonoBold9pt7b);
-    tft.drawString("FF5 Mono9 bold", 170, 136);
-
-    tft.setTextColor(COLOR_OK, COLOR_BG);
-    tft.setFreeFont(&FreeSerif9pt7b);
-    tft.drawString("FF33 Serif9", 10, 190);
-    tft.setFreeFont(&FreeSerifBold9pt7b);
-    tft.drawString("FF41 Serif9 bold", 170, 190);
-
-    tft.setFreeFont(nullptr);
-    tft.setTextFont(2);
+    drawTextBox(0, 24, 72, 260, title, COLOR_ACCENT, 2);
+    drawTextBox(1, 24, 104, 260, line1, COLOR_TEXT, 2);
+    drawTextBox(2, 24, 130, 260, line2, COLOR_MUTED, 2);
 }
 
 const char* DisplayUi::getPageName(Page page) const {
     switch (page) {
         case Page::Overview:
             return "Overview";
-        case Page::Temperatures:
-            return "Temp";
         case Page::AirConditioner:
             return "AC";
-        case Page::Network:
-            return "Network";
-        case Page::FontTest1:
-            return "Font 1";
-        case Page::FontTest2:
-            return "Font 2";
-        case Page::FontTest3:
-            return "Font 3";
+        case Page::Ventilation:
+            return "Vent";
+        case Page::Temperatures:
+            return "Temp";
+        case Page::Settings:
+            return "Settings";
+        case Page::Diagnostics:
+            return "Diag";
         case Page::Count:
             return "?";
     }
@@ -743,6 +879,365 @@ void DisplayUi::drawEyeIcon(int16_t x, int16_t y, uint16_t color) {
     tft.fillCircle(x, y, 2, color);
 }
 
+void DisplayUi::drawOverviewSelection(const DeviceState& state) {
+    if (interactionMode == InteractionMode::View) {
+        return;
+    }
+
+    if (!isOverviewParamAvailable(state, selectedParam)) {
+        return;
+    }
+
+    drawParamFrame(selectedParam, interactionMode == InteractionMode::Edit ? COLOR_TITLE : COLOR_ACCENT);
+}
+
+void DisplayUi::drawParamFrame(OverviewParam param, uint16_t color) {
+    switch (param) {
+        case OverviewParam::Mode:
+            tft.drawRect(76, 30, 78, 34, color);
+            break;
+        case OverviewParam::SetTemp:
+            tft.drawRect(196, 94, 54, 22, color);
+            break;
+        case OverviewParam::AcPower:
+            tft.drawRect(66, 148, 42, 22, color);
+            break;
+        case OverviewParam::AcMode:
+            tft.drawRect(60, 168, 88, 22, color);
+            break;
+        case OverviewParam::AcTemp:
+            tft.drawRect(40, 190, 40, 22, color);
+            break;
+        case OverviewParam::AcFan:
+            tft.drawRect(108, 190, 46, 22, color);
+            break;
+        case OverviewParam::VfdPower:
+            tft.drawRect(222, 148, 44, 22, color);
+            break;
+        case OverviewParam::VfdStep:
+            tft.drawRect(210, 168, 44, 22, color);
+            break;
+        case OverviewParam::Count:
+            break;
+    }
+}
+
+void DisplayUi::enterSelectMode(DeviceState& state) {
+    selectedParam = firstAvailableOverviewParam(state);
+    interactionMode = InteractionMode::Select;
+    dirty = true;
+    fullRedraw = true;
+    Logger::debugf(TAG_UI, "CONFIG mode: selected %s", overviewParamName(selectedParam));
+}
+
+void DisplayUi::enterEditMode(const DeviceState& state) {
+    if (!isOverviewParamAvailable(state, selectedParam)) {
+        Logger::warningf(TAG_UI, "Parameter %s is not available in current mode", overviewParamName(selectedParam));
+        return;
+    }
+
+    switch (selectedParam) {
+        case OverviewParam::Mode:
+            editValue = state.controllerState.mode == DeviceMode::Manual ? 1 : (state.controllerState.mode == DeviceMode::Disabled ? 2 : 0);
+            break;
+        case OverviewParam::SetTemp:
+            editValue = (int16_t)(state.environment.targetIndoorTempC * 2.0f + 0.5f);
+            break;
+        case OverviewParam::AcPower:
+            editValue = state.ac.powerOn ? 1 : 0;
+            break;
+        case OverviewParam::AcMode:
+            editValue = acModeListIndex(state.ac.mode);
+            break;
+        case OverviewParam::AcTemp:
+            editValue = state.ac.temperature < 16 ? 22 : state.ac.temperature;
+            break;
+        case OverviewParam::AcFan:
+            editValue = state.ac.fanMode > 4 ? 0 : state.ac.fanMode;
+            break;
+        case OverviewParam::VfdPower:
+            editValue = state.vfd.commandedRunning || state.vfd.running ? 1 : 0;
+            break;
+        case OverviewParam::VfdStep:
+            editValue = vfdStep(state.vfd);
+            break;
+        case OverviewParam::Count:
+            editValue = 0;
+            break;
+    }
+
+    interactionMode = InteractionMode::Edit;
+    dirty = true;
+    fullRedraw = true;
+    Logger::debugf(TAG_UI, "EDIT mode: %s", overviewParamName(selectedParam));
+}
+
+void DisplayUi::cancelEdit(DeviceState& state) {
+    (void)state;
+    interactionMode = InteractionMode::Select;
+    dirty = true;
+    fullRedraw = true;
+    Logger::debugf(TAG_UI, "Edit canceled: %s", overviewParamName(selectedParam));
+}
+
+void DisplayUi::moveSelection(const DeviceState& state, int8_t direction) {
+    uint8_t index = static_cast<uint8_t>(selectedParam);
+
+    for (uint8_t i = 0; i < static_cast<uint8_t>(OverviewParam::Count); i++) {
+        index = (index + static_cast<uint8_t>(OverviewParam::Count) + direction) % static_cast<uint8_t>(OverviewParam::Count);
+        const OverviewParam candidate = static_cast<OverviewParam>(index);
+        if (isOverviewParamAvailable(state, candidate)) {
+            selectedParam = candidate;
+            dirty = true;
+            fullRedraw = true;
+            Logger::debugf(TAG_UI, "Selected %s", overviewParamName(selectedParam));
+            return;
+        }
+    }
+}
+
+void DisplayUi::changeEditValue(int8_t direction) {
+    switch (selectedParam) {
+        case OverviewParam::Mode:
+            editValue = (editValue + 3 + direction) % 3;
+            break;
+        case OverviewParam::SetTemp:
+            editValue += direction;
+            if (editValue < 32) editValue = 60;
+            if (editValue > 60) editValue = 32;
+            break;
+        case OverviewParam::AcPower:
+        case OverviewParam::VfdPower:
+            editValue = editValue == 0 ? 1 : 0;
+            break;
+        case OverviewParam::AcMode:
+            editValue = (editValue + 4 + direction) % 4;
+            break;
+        case OverviewParam::AcTemp:
+            editValue += direction;
+            if (editValue < 16) editValue = 30;
+            if (editValue > 30) editValue = 16;
+            break;
+        case OverviewParam::AcFan:
+            editValue = (editValue + 5 + direction) % 5;
+            break;
+        case OverviewParam::VfdStep:
+            editValue += direction;
+            if (editValue < 0) editValue = 6;
+            if (editValue > 6) editValue = 0;
+            break;
+        case OverviewParam::Count:
+            break;
+    }
+
+    dirty = true;
+    fullRedraw = true;
+    Logger::debugf(TAG_UI, "Edit value changed: %s", overviewParamName(selectedParam));
+}
+
+DisplayUi::Action DisplayUi::applyEdit(DeviceState& state) {
+    Action action;
+
+    if (!isOverviewParamAvailable(state, selectedParam)) {
+        Logger::warningf(TAG_UI, "Apply rejected: %s is not available", overviewParamName(selectedParam));
+        interactionMode = InteractionMode::Select;
+        dirty = true;
+        fullRedraw = true;
+        return action;
+    }
+
+    const bool manualMode = state.controllerState.mode == DeviceMode::Manual;
+
+    switch (selectedParam) {
+        case OverviewParam::Mode: {
+            const DeviceMode oldMode = state.controllerState.mode;
+            const DeviceMode newMode = editValue == 0 ? DeviceMode::Auto : (editValue == 1 ? DeviceMode::Manual : DeviceMode::Disabled);
+            state.controllerState.mode = newMode;
+            state.settings.mode = newMode;
+            Logger::infof(TAG_UI, "Mode changed: %s -> %s", deviceModeName(oldMode), deviceModeName(newMode));
+            action.settingsChanged = true;
+            break;
+        }
+        case OverviewParam::SetTemp: {
+            const float oldValue = state.environment.targetIndoorTempC;
+            const float newValue = editValue / 2.0f;
+            state.environment.targetIndoorTempC = newValue;
+            state.settings.targetIndoorTempC = newValue;
+            Logger::infof(TAG_UI, "Set temp changed: %.1f -> %.1f C", oldValue, newValue);
+            action.settingsChanged = true;
+            break;
+        }
+        case OverviewParam::AcPower:
+            state.settings.manualAcPower = editValue != 0;
+            Logger::infof(TAG_UI, "AC power setting: %s", state.settings.manualAcPower ? "ON" : "OFF");
+            action.settingsChanged = true;
+            if (manualMode) {
+                action.type = ActionType::AcPower;
+                action.boolValue = state.settings.manualAcPower;
+            }
+            break;
+        case OverviewParam::AcMode:
+            state.settings.manualAcMode = acModeFromListIndex((uint8_t)editValue);
+            Logger::infof(TAG_UI, "AC mode setting: %s", acModeTitle(state.settings.manualAcMode));
+            action.settingsChanged = true;
+            if (manualMode) {
+                action.type = ActionType::AcMode;
+                action.uintValue = state.settings.manualAcMode;
+            }
+            break;
+        case OverviewParam::AcTemp:
+            state.settings.manualAcTemperature = (uint8_t)editValue;
+            Logger::infof(TAG_UI, "AC temp setting: %u C", state.settings.manualAcTemperature);
+            action.settingsChanged = true;
+            if (manualMode) {
+                action.type = ActionType::AcTemperature;
+                action.uintValue = state.settings.manualAcTemperature;
+            }
+            break;
+        case OverviewParam::AcFan:
+            state.settings.manualAcFanMode = (uint8_t)editValue;
+            Logger::infof(TAG_UI, "AC fan setting: %s", acFanTitle(state.settings.manualAcFanMode));
+            action.settingsChanged = true;
+            if (manualMode) {
+                action.type = ActionType::AcFan;
+                action.uintValue = state.settings.manualAcFanMode;
+            }
+            break;
+        case OverviewParam::VfdPower:
+            state.settings.manualVfdPower = editValue != 0;
+            Logger::infof(TAG_UI, "VFD power setting: %s", state.settings.manualVfdPower ? "ON" : "OFF");
+            action.settingsChanged = true;
+            if (manualMode) {
+                if (!state.settings.manualVfdPower) {
+                    action.type = ActionType::VfdStop;
+                } else if (state.settings.manualVfdStep > 0) {
+                    action.type = ActionType::VfdRunStep;
+                    action.uintValue = state.settings.manualVfdStep;
+                    action.floatValue = vfdStepToHz(state.settings.manualVfdStep);
+                }
+            }
+            break;
+        case OverviewParam::VfdStep:
+            state.settings.manualVfdStep = (uint8_t)editValue;
+            Logger::infof(TAG_UI, "VFD step setting: %u", state.settings.manualVfdStep);
+            action.settingsChanged = true;
+            if (manualMode) {
+                if (state.settings.manualVfdStep == 0) {
+                    action.type = ActionType::VfdStop;
+                } else if (state.settings.manualVfdPower) {
+                    action.type = ActionType::VfdRunStep;
+                    action.uintValue = state.settings.manualVfdStep;
+                    action.floatValue = vfdStepToHz(state.settings.manualVfdStep);
+                }
+            }
+            break;
+        case OverviewParam::Count:
+            break;
+    }
+
+    interactionMode = InteractionMode::Select;
+    dirty = true;
+    fullRedraw = true;
+    return action;
+}
+
+bool DisplayUi::isOverviewParamAvailable(const DeviceState& state, OverviewParam param) const {
+    if (param == OverviewParam::Mode || param == OverviewParam::SetTemp) {
+        return true;
+    }
+
+    return state.controllerState.mode == DeviceMode::Manual;
+}
+
+DisplayUi::OverviewParam DisplayUi::firstAvailableOverviewParam(const DeviceState& state) const {
+    for (uint8_t i = 0; i < static_cast<uint8_t>(OverviewParam::Count); i++) {
+        const OverviewParam param = static_cast<OverviewParam>(i);
+        if (isOverviewParamAvailable(state, param)) {
+            return param;
+        }
+    }
+
+    return OverviewParam::Mode;
+}
+
+uint8_t DisplayUi::acModeListIndex(uint8_t mode) const {
+    switch (mode) {
+        case 3:
+            return 1;
+        case 4:
+            return 2;
+        case 1:
+            return 3;
+        case 5:
+        default:
+            return 0;
+    }
+}
+
+uint8_t DisplayUi::acModeFromListIndex(uint8_t index) const {
+    switch (index % 4) {
+        case 1:
+            return 3;
+        case 2:
+            return 4;
+        case 3:
+            return 1;
+        case 0:
+        default:
+            return 5;
+    }
+}
+
+float DisplayUi::vfdStepToHz(uint8_t step) const {
+    if (step == 0) {
+        return 0.0f;
+    }
+
+    if (step >= 6) {
+        return 50.0f;
+    }
+
+    return 20.0f + (step - 1) * 6.0f;
+}
+
+const char* DisplayUi::overviewParamName(OverviewParam param) const {
+    switch (param) {
+        case OverviewParam::Mode:
+            return "MODE";
+        case OverviewParam::SetTemp:
+            return "SET TEMP";
+        case OverviewParam::AcPower:
+            return "AC POWER";
+        case OverviewParam::AcMode:
+            return "AC MODE";
+        case OverviewParam::AcTemp:
+            return "AC TEMP";
+        case OverviewParam::AcFan:
+            return "AC FAN";
+        case OverviewParam::VfdPower:
+            return "VFD POWER";
+        case OverviewParam::VfdStep:
+            return "VFD STEP";
+        case OverviewParam::Count:
+            return "?";
+    }
+
+    return "?";
+}
+
+const char* DisplayUi::interactionLabel() const {
+    switch (interactionMode) {
+        case InteractionMode::Select:
+            return "CONFIG";
+        case InteractionMode::Edit:
+            return "EDIT";
+        case InteractionMode::View:
+            return "";
+    }
+
+    return "";
+}
+
 const char* DisplayUi::acModeName(uint8_t mode) const {
     switch (mode) {
         case 1:
@@ -904,8 +1399,20 @@ uint16_t DisplayUi::activityColor(ControllerActivity activity) const {
 }
 
 uint8_t DisplayUi::vfdStep(const VfdStateSnapshot& vfd) const {
+    if (vfd.commandedRunning && vfd.hasRequestedFrequency) {
+        if (vfd.requestedFrequencyHz <= 20.0f) {
+            return 1;
+        }
+
+        if (vfd.requestedFrequencyHz >= 50.0f) {
+            return 6;
+        }
+
+        return 1 + (uint8_t)((vfd.requestedFrequencyHz - 20.0f) / 6.0f);
+    }
+
     if (!vfd.hasRequestedFrequency || strcmp(vfd.lastAction, "stop") == 0 || strcmp(vfd.lastAction, "none") == 0) {
-        return 0;
+        return vfd.hasActualFrequency ? vfd.actualStep : 0;
     }
 
     if (vfd.requestedFrequencyHz <= 20.0f) {

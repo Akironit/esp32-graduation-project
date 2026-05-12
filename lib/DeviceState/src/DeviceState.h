@@ -30,9 +30,19 @@ struct TemperatureStateSnapshot {
 
 struct VfdStateSnapshot {
     bool initialized = false;
+    bool online = false;
+    bool everOnline = false;
+    bool communicationError = false;
+    bool hasStatusWord = false;
+    uint16_t statusWord = 0;
+    bool running = false;
+    bool commandedRunning = false;
     const char* lastAction = "none";
     bool hasRequestedFrequency = false;
     float requestedFrequencyHz = 0.0f;
+    bool hasActualFrequency = false;
+    float actualFrequencyHz = 0.0f;
+    uint8_t actualStep = 0;
     uint32_t requestCount = 0;
     uint32_t okCount = 0;
     uint32_t errorCount = 0;
@@ -103,12 +113,24 @@ struct EnvironmentStateSnapshot {
     bool exhaustVentEnabled = false;
 };
 
+struct UserSettingsSnapshot {
+    DeviceMode mode = DeviceMode::Auto;
+    float targetIndoorTempC = 22.0f;
+    bool manualAcPower = false;
+    uint8_t manualAcMode = 5;
+    uint8_t manualAcTemperature = 22;
+    uint8_t manualAcFanMode = 0;
+    bool manualVfdPower = false;
+    uint8_t manualVfdStep = 0;
+};
+
 struct DeviceState {
     bool wifiConnected = false;
     IPAddress ip;
 
     ControllerStateSnapshot controllerState;
     EnvironmentStateSnapshot environment;
+    UserSettingsSnapshot settings;
     AcStateSnapshot ac;
     TemperatureStateSnapshot temperatures;
     VfdStateSnapshot vfd;

@@ -5,7 +5,10 @@
 
 namespace {
 constexpr const char* TAG_INPUT = "INPUT";
+constexpr const char* TAG_SETTINGS = "SETTINGS";
 constexpr unsigned long BUTTON_POLL_INTERVAL_MS = 10;
+constexpr unsigned long VFD_STATUS_POLL_INTERVAL_MS = 5000;
+constexpr const char* SETTINGS_NAMESPACE = "climate";
 
 volatile bool mcpInterruptA = false;
 volatile bool mcpInterruptB = false;
@@ -22,6 +25,8 @@ void IRAM_ATTR handleMcpInterruptB() {
 
 
 void App::begin() {
+    loadUserSettings();
+
     controller.begin(&hp, &vfd, &display, &tempSensors);
     console.begin(&hp, &vfd, &tempSensors, &display, &state, &controller);
     display.begin();
@@ -83,6 +88,10 @@ void App::update() {
     updateHeatPump();
     updateIoExpanderInputs();
 
+    updateVfdStatus();
+    updateHeatPump();
+    updateIoExpanderInputs();
+
     updateDeviceState();
     display.update(state);
     updateHeatPump();
@@ -95,6 +104,17 @@ void App::update() {
 void App::updateHeatPump() {
     hp.waitForFrame();
     hp.sendPendingFrame();
+}
+
+
+void App::updateVfdStatus() {
+    const unsigned long now = millis();
+    if (now - lastVfdStatusPollMs < VFD_STATUS_POLL_INTERVAL_MS) {
+        return;
+    }
+
+    lastVfdStatusPollMs = now;
+    vfd.pollStatus();
 }
 
 
@@ -153,9 +173,19 @@ void App::updateDeviceState() {
         : DEVICE_DISCONNECTED_C;
 
     state.vfd.initialized = vfd.isInitialized();
+    state.vfd.online = vfd.isOnline();
+    state.vfd.everOnline = vfd.hasEverBeenOnline();
+    state.vfd.communicationError = vfd.hasCommunicationError();
+    state.vfd.hasStatusWord = vfd.hasStatusWord();
+    state.vfd.statusWord = vfd.getStatusWord();
+    state.vfd.running = vfd.isRunning();
+    state.vfd.commandedRunning = vfd.isCommandedRunning();
     state.vfd.lastAction = vfd.getLastAction();
     state.vfd.hasRequestedFrequency = vfd.hasRequestedFrequency();
     state.vfd.requestedFrequencyHz = vfd.getRequestedFrequencyHz();
+    state.vfd.hasActualFrequency = vfd.hasActualFrequency();
+    state.vfd.actualFrequencyHz = vfd.getActualFrequencyHz();
+    state.vfd.actualStep = vfd.getActualStep();
     state.vfd.requestCount = vfd.getRequestCount();
     state.vfd.okCount = vfd.getOkCount();
     state.vfd.errorCount = vfd.getErrorCount();
@@ -194,6 +224,7 @@ void App::configureIoExpanderInputs() {
     ioExpander.pinMode(MCP_PIN_GPA5, INPUT_PULLUP);
     ioExpander.pinMode(MCP_PIN_GPA6, INPUT_PULLUP);
     ioExpander.pinMode(MCP_PIN_GPA7, INPUT_PULLUP);
+    ioExpander.pinMode(MCP_PIN_EXHAUST_VENT, INPUT_PULLUP);
     ioExpander.pinMode(MCP_BUTTON_BACK_PIN, INPUT_PULLUP);
     ioExpander.pinMode(MCP_BUTTON_LEFT_PIN, INPUT_PULLUP);
     ioExpander.pinMode(MCP_BUTTON_RIGHT_PIN, INPUT_PULLUP);
@@ -202,6 +233,7 @@ void App::configureIoExpanderInputs() {
     ioExpander.enableInterruptOnChange(MCP_PIN_GPA5);
     ioExpander.enableInterruptOnChange(MCP_PIN_GPA6);
     ioExpander.enableInterruptOnChange(MCP_PIN_GPA7);
+    ioExpander.enableInterruptOnChange(MCP_PIN_EXHAUST_VENT);
     ioExpander.enableInterruptOnChange(MCP_BUTTON_BACK_PIN);
     ioExpander.enableInterruptOnChange(MCP_BUTTON_LEFT_PIN);
     ioExpander.enableInterruptOnChange(MCP_BUTTON_RIGHT_PIN);
@@ -211,6 +243,8 @@ void App::configureIoExpanderInputs() {
     lastGpa5State = ioExpander.digitalRead(MCP_PIN_GPA5);
     lastGpa6State = ioExpander.digitalRead(MCP_PIN_GPA6);
     lastGpa7State = ioExpander.digitalRead(MCP_PIN_GPA7);
+    lastExhaustVentState = ioExpander.digitalRead(MCP_PIN_EXHAUST_VENT);
+    updateVentilationInputs(lastGpa5State, lastGpa6State, lastGpa7State, lastExhaustVentState);
     buttonBack.begin(true, 50, 500);
     buttonLeft.begin(true, 50, 500);
     buttonRight.begin(true, 50, 500);
@@ -221,7 +255,7 @@ void App::configureIoExpanderInputs() {
     attachInterrupt(digitalPinToInterrupt(MCP_INT_A_PIN), handleMcpInterruptA, FALLING);
     attachInterrupt(digitalPinToInterrupt(MCP_INT_B_PIN), handleMcpInterruptB, FALLING);
 
-    Logger::info(TAG_INPUT, "GPA0-GPA3 buttons and GPA5/GPA6/GPA7 interrupt monitor started");
+    Logger::info(TAG_INPUT, "GPA0-GPA3 buttons and GPA4-GPA7 ventilation inputs started");
 }
 
 
@@ -270,6 +304,7 @@ void App::processIoExpanderPort() {
     const int gpa5State = (portState & (1 << MCP_PIN_GPA5)) ? HIGH : LOW;
     const int gpa6State = (portState & (1 << MCP_PIN_GPA6)) ? HIGH : LOW;
     const int gpa7State = (portState & (1 << MCP_PIN_GPA7)) ? HIGH : LOW;
+    const int exhaustVentState = (portState & (1 << MCP_PIN_EXHAUST_VENT)) ? HIGH : LOW;
 
     if (gpa5State != lastGpa5State) {
         lastGpa5State = gpa5State;
@@ -285,6 +320,13 @@ void App::processIoExpanderPort() {
         lastGpa7State = gpa7State;
         handleIoExpanderInputChange(MCP_PIN_GPA7, gpa7State);
     }
+
+    if (exhaustVentState != lastExhaustVentState) {
+        lastExhaustVentState = exhaustVentState;
+        handleIoExpanderInputChange(MCP_PIN_EXHAUST_VENT, exhaustVentState);
+    }
+
+    updateVentilationInputs(gpa5State, gpa6State, gpa7State, exhaustVentState);
 
     const unsigned long now = millis();
     const bool backPressed = (portState & (1 << MCP_BUTTON_BACK_PIN)) == 0;
@@ -323,27 +365,145 @@ void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
         return;
     }
 
+    DisplayUi::Button button = DisplayUi::Button::Ok;
+    if (strcmp(name, "BACK") == 0) {
+        button = DisplayUi::Button::Back;
+    } else if (strcmp(name, "LEFT") == 0) {
+        button = DisplayUi::Button::Left;
+    } else if (strcmp(name, "RIGHT") == 0) {
+        button = DisplayUi::Button::Right;
+    } else if (strcmp(name, "OK") == 0) {
+        button = DisplayUi::Button::Ok;
+    }
+
     if (event == ButtonInput::Event::LongPress) {
         Logger::debugf(TAG_INPUT, "Button %s long press", name);
-
-        if (strcmp(name, "BACK") == 0) {
-            controller.displaySetPage(DisplayUi::Page::Overview);
-        } else if (strcmp(name, "OK") == 0) {
-            Logger::debug(TAG_INPUT, "OK long press action is reserved for future menu selection");
-        }
-
+        display.handleButton(button, true, state);
         return;
     }
 
     Logger::debugf(TAG_INPUT, "Button %s short press", name);
+    const DisplayUi::Action action = display.handleButton(button, false, state);
 
-    if (strcmp(name, "LEFT") == 0) {
-        controller.displayPreviousPage();
-    } else if (strcmp(name, "RIGHT") == 0) {
-        controller.displayNextPage();
-    } else if (strcmp(name, "BACK") == 0) {
-        controller.displaySetPage(DisplayUi::Page::Overview);
-    } else if (strcmp(name, "OK") == 0) {
-        Logger::debug(TAG_INPUT, "OK button action is reserved for future menu selection");
+    if (action.settingsChanged) {
+        saveUserSettings();
     }
+
+    switch (action.type) {
+        case DisplayUi::ActionType::AcPower:
+            controller.setAcPower(action.boolValue);
+            break;
+        case DisplayUi::ActionType::AcMode:
+            controller.setAcMode(action.uintValue);
+            break;
+        case DisplayUi::ActionType::AcTemperature:
+            controller.setAcTemperature(action.uintValue);
+            break;
+        case DisplayUi::ActionType::AcFan:
+            controller.setAcFanMode(action.uintValue);
+            break;
+        case DisplayUi::ActionType::VfdStop:
+            controller.vfdStop();
+            break;
+        case DisplayUi::ActionType::VfdRunStep:
+            controller.vfdSetFrequency(action.floatValue);
+            controller.vfdForward();
+            break;
+        case DisplayUi::ActionType::None:
+            break;
+    }
+}
+
+
+void App::updateVentilationInputs(int gpa5State, int gpa6State, int gpa7State, int exhaustState) {
+    uint8_t hoodLevel = 0;
+    if (gpa5State == LOW) {
+        hoodLevel = 1;
+    }
+    if (gpa6State == LOW) {
+        hoodLevel = 2;
+    }
+    if (gpa7State == LOW) {
+        hoodLevel = 3;
+    }
+
+    const bool exhaustEnabled = exhaustState == LOW;
+
+    if (state.environment.kitchenHoodLevel != hoodLevel) {
+        state.environment.kitchenHoodLevel = hoodLevel;
+        Logger::infof(TAG_INPUT, "Kitchen hood level updated from MCP23017: %u", hoodLevel);
+    }
+
+    if (state.environment.exhaustVentEnabled != exhaustEnabled) {
+        state.environment.exhaustVentEnabled = exhaustEnabled;
+        Logger::infof(TAG_INPUT, "Bathroom exhaust updated from MCP23017: %s", exhaustEnabled ? "ON" : "OFF");
+    }
+}
+
+
+void App::loadUserSettings() {
+    if (!preferences.begin(SETTINGS_NAMESPACE, true)) {
+        Logger::warning(TAG_SETTINGS, "Failed to open NVS for reading");
+        return;
+    }
+
+    const uint8_t mode = preferences.getUChar("mode", static_cast<uint8_t>(state.settings.mode));
+    const float targetTemp = preferences.getFloat("setTemp", state.settings.targetIndoorTempC);
+    state.settings.mode = mode == static_cast<uint8_t>(DeviceMode::Manual)
+        ? DeviceMode::Manual
+        : (mode == static_cast<uint8_t>(DeviceMode::Disabled) ? DeviceMode::Disabled : DeviceMode::Auto);
+    state.settings.targetIndoorTempC = constrain(targetTemp, 16.0f, 30.0f);
+    state.settings.manualAcPower = preferences.getBool("acPower", state.settings.manualAcPower);
+    state.settings.manualAcMode = preferences.getUChar("acMode", state.settings.manualAcMode);
+    if (state.settings.manualAcMode != 1 && state.settings.manualAcMode != 3 && state.settings.manualAcMode != 4 && state.settings.manualAcMode != 5) {
+        state.settings.manualAcMode = 5;
+    }
+    state.settings.manualAcTemperature = preferences.getUChar("acTemp", state.settings.manualAcTemperature);
+    state.settings.manualAcTemperature = constrain(state.settings.manualAcTemperature, (uint8_t)16, (uint8_t)30);
+    state.settings.manualAcFanMode = preferences.getUChar("acFan", state.settings.manualAcFanMode);
+    if (state.settings.manualAcFanMode > 4) {
+        state.settings.manualAcFanMode = 0;
+    }
+    state.settings.manualVfdPower = preferences.getBool("vfdPower", state.settings.manualVfdPower);
+    state.settings.manualVfdStep = preferences.getUChar("vfdStep", state.settings.manualVfdStep);
+    if (state.settings.manualVfdStep > 6) {
+        state.settings.manualVfdStep = 0;
+    }
+    preferences.end();
+
+    state.controllerState.mode = state.settings.mode;
+    state.environment.targetIndoorTempC = state.settings.targetIndoorTempC;
+
+    Logger::infof(
+        TAG_SETTINGS,
+        "Loaded settings: mode=%u setTemp=%.1f acPower=%u acMode=%u acTemp=%u acFan=%u vfdPower=%u vfdStep=%u",
+        static_cast<unsigned int>(state.settings.mode),
+        state.settings.targetIndoorTempC,
+        state.settings.manualAcPower ? 1 : 0,
+        state.settings.manualAcMode,
+        state.settings.manualAcTemperature,
+        state.settings.manualAcFanMode,
+        state.settings.manualVfdPower ? 1 : 0,
+        state.settings.manualVfdStep
+    );
+}
+
+
+void App::saveUserSettings() {
+    if (!preferences.begin(SETTINGS_NAMESPACE, false)) {
+        Logger::warning(TAG_SETTINGS, "Failed to open NVS for writing");
+        return;
+    }
+
+    preferences.putUChar("mode", static_cast<uint8_t>(state.settings.mode));
+    preferences.putFloat("setTemp", state.settings.targetIndoorTempC);
+    preferences.putBool("acPower", state.settings.manualAcPower);
+    preferences.putUChar("acMode", state.settings.manualAcMode);
+    preferences.putUChar("acTemp", state.settings.manualAcTemperature);
+    preferences.putUChar("acFan", state.settings.manualAcFanMode);
+    preferences.putBool("vfdPower", state.settings.manualVfdPower);
+    preferences.putUChar("vfdStep", state.settings.manualVfdStep);
+    preferences.end();
+
+    Logger::info(TAG_SETTINGS, "User settings saved to NVS");
 }

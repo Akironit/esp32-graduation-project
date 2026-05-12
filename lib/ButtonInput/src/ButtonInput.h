@@ -19,6 +19,7 @@ private:
     bool activeLow = true;
     bool rawState = false;
     bool debouncedState = false;
+    bool longPressFired = false;
 
     unsigned long debounceMs = 50;
     unsigned long longPressMs = 500;

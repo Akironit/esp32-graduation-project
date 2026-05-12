@@ -2,6 +2,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include "NetworkManager.h"
 #include "Secrets.h"
 #include "FujiHeatPump.h"
@@ -39,6 +40,7 @@
 #define MCP_INT_B_PIN 35
 
 // MCP23017 pins: GPA0-GPA7 are 0-7, GPB0-GPB7 are 8-15.
+#define MCP_PIN_EXHAUST_VENT 4
 #define MCP_PIN_GPA5 5
 #define MCP_PIN_GPA6 6
 #define MCP_PIN_GPA7 7
@@ -58,11 +60,15 @@ public:
 private:
     void updateHeatPump();
     void updateDeviceState();
+    void updateVfdStatus();
     void configureIoExpanderInputs();
     void updateIoExpanderInputs();
     void processIoExpanderPort();
     void handleIoExpanderInputChange(uint8_t pin, int currentState);
     void handleButtonEvent(const char* name, ButtonInput::Event event);
+    void loadUserSettings();
+    void saveUserSettings();
+    void updateVentilationInputs(int gpa5State, int gpa6State, int gpa7State, int exhaustState);
 
     FujiHeatPump hp;
     SerialConsole console;
@@ -73,10 +79,12 @@ private:
     DeviceState state;
     DeviceController controller;
     HomeAssistantBridge homeAssistant;
+    Preferences preferences;
     bool ioExpanderReady = false;
     int lastGpa5State = HIGH;
     int lastGpa6State = HIGH;
     int lastGpa7State = HIGH;
+    int lastExhaustVentState = HIGH;
     ButtonInput buttonBack;
     ButtonInput buttonLeft;
     ButtonInput buttonRight;
@@ -84,6 +92,7 @@ private:
     bool buttonsActive = false;
     unsigned long lastButtonPollMs = 0;
     uint32_t lastUptimeSecond = UINT32_MAX;
+    unsigned long lastVfdStatusPollMs = 0;
     NetworkManager network{
         WIFI_SSID,
         WIFI_PASSWORD,

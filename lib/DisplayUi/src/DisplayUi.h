@@ -10,13 +10,37 @@ class DisplayUi {
 public:
     enum class Page : uint8_t {
         Overview = 0,
-        Temperatures,
         AirConditioner,
-        Network,
-        FontTest1,
-        FontTest2,
-        FontTest3,
+        Ventilation,
+        Temperatures,
+        Settings,
+        Diagnostics,
         Count
+    };
+
+    enum class Button : uint8_t {
+        Back,
+        Left,
+        Right,
+        Ok
+    };
+
+    enum class ActionType : uint8_t {
+        None,
+        AcPower,
+        AcMode,
+        AcTemperature,
+        AcFan,
+        VfdStop,
+        VfdRunStep
+    };
+
+    struct Action {
+        ActionType type = ActionType::None;
+        bool settingsChanged = false;
+        bool boolValue = false;
+        uint8_t uintValue = 0;
+        float floatValue = 0.0f;
     };
 
     void begin();
@@ -29,13 +53,44 @@ public:
     bool isReady() const;
     uint8_t getPageIndex() const;
     const char* getPageName() const;
+    Action handleButton(Button button, bool longPress, DeviceState& state);
 
 private:
+    enum class InteractionMode : uint8_t {
+        View,
+        Select,
+        Edit
+    };
+
+    enum class OverviewParam : uint8_t {
+        Mode = 0,
+        SetTemp,
+        AcPower,
+        AcMode,
+        AcTemp,
+        AcFan,
+        VfdPower,
+        VfdStep,
+        Count
+    };
+
     TFT_eSPI tft;
     Page currentPage = Page::Overview;
+    InteractionMode interactionMode = InteractionMode::View;
+    OverviewParam selectedParam = OverviewParam::Mode;
+    int16_t editValue = 0;
     bool ready = false;
     bool dirty = true;
     bool fullRedraw = true;
+    bool lastHeaderWifiConnected = false;
+    bool lastHeaderHaConnected = false;
+    bool headerStatusCached = false;
+    const char* lastInteractionLabel = nullptr;
+    bool lastInteractionEdit = false;
+    char lastFooterText[8] = "";
+    char lastUptimeText[16] = "";
+    uint8_t lastWarningCount = 255;
+    uint8_t lastErrorCount = 255;
     unsigned long lastRenderMs = 0;
     static constexpr unsigned long RENDER_INTERVAL_MS = 1000;
     static constexpr uint8_t LINE_CACHE_SIZE = 40;
@@ -56,10 +111,10 @@ private:
     void drawOverview(const DeviceState& state);
     void drawTemperatures(const TemperatureStateSnapshot& temperatures);
     void drawAirConditioner(const AcStateSnapshot& ac);
-    void drawNetwork(const DeviceState& state);
-    void drawFontTest1();
-    void drawFontTest2();
-    void drawFontTest3();
+    void drawVentilation(const DeviceState& state);
+    void drawSettings(const DeviceState& state);
+    void drawDiagnostics(const DeviceState& state);
+    void drawPlaceholder(const char* title, const char* line1, const char* line2);
     void drawPanel(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
     void drawStatusDot(int16_t x, int16_t y, bool ok, const char* label);
     void drawWifiIcon(int16_t x, int16_t y, uint16_t color);
@@ -71,6 +126,22 @@ private:
     void drawSnowflakeIcon(int16_t x, int16_t y, uint16_t color);
     void drawHeatIcon(int16_t x, int16_t y, uint16_t color);
     void drawEyeIcon(int16_t x, int16_t y, uint16_t color);
+    void drawOverviewSelection(const DeviceState& state);
+    void drawParamFrame(OverviewParam param, uint16_t color);
+
+    void enterSelectMode(DeviceState& state);
+    void enterEditMode(const DeviceState& state);
+    void cancelEdit(DeviceState& state);
+    void moveSelection(const DeviceState& state, int8_t direction);
+    void changeEditValue(int8_t direction);
+    Action applyEdit(DeviceState& state);
+    bool isOverviewParamAvailable(const DeviceState& state, OverviewParam param) const;
+    OverviewParam firstAvailableOverviewParam(const DeviceState& state) const;
+    uint8_t acModeListIndex(uint8_t mode) const;
+    uint8_t acModeFromListIndex(uint8_t index) const;
+    float vfdStepToHz(uint8_t step) const;
+    const char* overviewParamName(OverviewParam param) const;
+    const char* interactionLabel() const;
 
     const char* acModeName(uint8_t mode) const;
     const char* acModeTitle(uint8_t mode) const;

@@ -190,8 +190,13 @@ void HomeAssistantBridge::publishState() {
     }
 
     publishTopic("state/vfd/last_action", state->vfd.lastAction, true);
-    publishTopic("state/vfd/run", vfdRunState(state->vfd.lastAction), true);
+    publishTopic("state/vfd/online", state->vfd.online ? "online" : "offline", true);
+    publishTopic("state/vfd/link", state->vfd.communicationError || (state->vfd.everOnline && !state->vfd.online) ? "error" : (state->vfd.online ? "linked" : "waiting"), true);
+    publishTopic("state/vfd/run", state->vfd.statusWord == 0x0002 ? "rev" : (state->vfd.running ? "fwd" : "stop"), true);
+    publishTopicf("state/vfd/status_word", "%u", state->vfd.statusWord);
     publishTopicf("state/vfd/requested_frequency", "%.2f", state->vfd.requestedFrequencyHz);
+    publishTopicf("state/vfd/actual_frequency", "%.2f", state->vfd.actualFrequencyHz);
+    publishTopicf("state/vfd/actual_step", "%u", state->vfd.actualStep);
     publishTopicf("state/vfd/requests", "%lu", (unsigned long)state->vfd.requestCount);
     publishTopicf("state/vfd/errors", "%lu", (unsigned long)state->vfd.errorCount);
 
@@ -234,7 +239,12 @@ void HomeAssistantBridge::publishDiscovery() {
     }
 
     publishSensorDiscovery("vfd_last_action", "VFD last action", "climate_controller_vfd_last_action", "state/vfd/last_action");
+    publishBinarySensorDiscovery("vfd_online", "VFD online", "climate_controller_vfd_online", "state/vfd/online", "connectivity", "online", "offline");
+    publishSensorDiscovery("vfd_link", "VFD link", "climate_controller_vfd_link", "state/vfd/link");
+    publishSensorDiscovery("vfd_status_word", "VFD status word", "climate_controller_vfd_status_word", "state/vfd/status_word");
     publishSensorDiscovery("vfd_requested_frequency", "VFD requested frequency", "climate_controller_vfd_requested_frequency", "state/vfd/requested_frequency", nullptr, "Hz", "measurement");
+    publishSensorDiscovery("vfd_actual_frequency", "VFD actual frequency", "climate_controller_vfd_actual_frequency", "state/vfd/actual_frequency", nullptr, "Hz", "measurement");
+    publishSensorDiscovery("vfd_actual_step", "VFD actual step", "climate_controller_vfd_actual_step", "state/vfd/actual_step");
     publishSensorDiscovery("vfd_requests", "VFD requests", "climate_controller_vfd_requests", "state/vfd/requests", nullptr, nullptr, "total_increasing");
     publishSensorDiscovery("vfd_errors", "VFD errors", "climate_controller_vfd_errors", "state/vfd/errors", nullptr, nullptr, "total_increasing");
     publishNumberDiscovery("vfd_frequency", "VFD frequency command", "climate_controller_vfd_frequency", "state/vfd/requested_frequency", "cmd/vfd/hz", 20, 50, 1, "Hz");
@@ -246,7 +256,7 @@ void HomeAssistantBridge::publishDiscovery() {
         "climate_controller_display_page",
         "state/display/page",
         "cmd/display/page",
-        "[\"overview\",\"temp\",\"ac\",\"network\",\"font1\",\"font2\",\"font3\",\"next\",\"prev\"]"
+        "[\"overview\",\"ac\",\"vent\",\"temp\",\"settings\",\"diag\",\"next\",\"prev\"]"
     );
 
     discoveryPublished = true;
@@ -526,18 +536,16 @@ void HomeAssistantBridge::handleCommand(const String& suffix, const String& payl
             controller->displayPreviousPage();
         } else if (payload == "overview") {
             controller->displaySetPage(DisplayUi::Page::Overview);
-        } else if (payload == "temp" || payload == "temperatures") {
-            controller->displaySetPage(DisplayUi::Page::Temperatures);
         } else if (payload == "ac") {
             controller->displaySetPage(DisplayUi::Page::AirConditioner);
-        } else if (payload == "network") {
-            controller->displaySetPage(DisplayUi::Page::Network);
-        } else if (payload == "font1") {
-            controller->displaySetPage(DisplayUi::Page::FontTest1);
-        } else if (payload == "font2") {
-            controller->displaySetPage(DisplayUi::Page::FontTest2);
-        } else if (payload == "font3") {
-            controller->displaySetPage(DisplayUi::Page::FontTest3);
+        } else if (payload == "vent" || payload == "ventilation") {
+            controller->displaySetPage(DisplayUi::Page::Ventilation);
+        } else if (payload == "temp" || payload == "temperatures") {
+            controller->displaySetPage(DisplayUi::Page::Temperatures);
+        } else if (payload == "settings" || payload == "network") {
+            controller->displaySetPage(DisplayUi::Page::Settings);
+        } else if (payload == "diag" || payload == "diagnostics") {
+            controller->displaySetPage(DisplayUi::Page::Diagnostics);
         }
     } else if (suffix == "vfd/run") {
         if (payload == "fwd" || payload == "forward") {
@@ -631,17 +639,15 @@ const char* HomeAssistantBridge::displayPageName(uint8_t pageIndex) const {
         case 0:
             return "overview";
         case 1:
-            return "temp";
-        case 2:
             return "ac";
+        case 2:
+            return "vent";
         case 3:
-            return "network";
+            return "temp";
         case 4:
-            return "font1";
+            return "settings";
         case 5:
-            return "font2";
-        case 6:
-            return "font3";
+            return "diag";
         default:
             return "unknown";
     }

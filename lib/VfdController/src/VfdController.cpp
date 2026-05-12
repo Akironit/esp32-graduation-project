@@ -5,6 +5,14 @@
 
 namespace {
 constexpr const char* TAG_VFD = "VFD";
+constexpr uint16_t REG_COMMAND_FREQUENCY = 0x2001;
+constexpr uint16_t REG_STATUS_WORD = 0x2100;
+constexpr uint16_t REG_OPERATION_FREQUENCY = 0x3000;
+constexpr unsigned long ONLINE_TIMEOUT_MS = 10000;
+
+bool isCrcNoise(Error error) {
+    return error == CRC_ERROR || error == ASCII_CRC_ERR;
+}
 }
 
 
@@ -42,18 +50,27 @@ void VfdController::begin(
 
 void VfdController::forward() {
     lastAction = "forward";
+    commandedRunning = true;
+    communicationError = false;
     queueWriteSingle(0x2000, 0x0001);
 }
 
 
 void VfdController::reverse() {
     lastAction = "reverse";
+    commandedRunning = true;
+    communicationError = false;
     queueWriteSingle(0x2000, 0x0002);
 }
 
 
 void VfdController::stop() {
     lastAction = "stop";
+    commandedRunning = false;
+    actualFrequencySet = true;
+    actualFrequencyHz = 0.0f;
+    actualStep = 0;
+    communicationError = false;
     queueWriteSingle(0x2000, 0x0005);
 }
 
@@ -71,7 +88,23 @@ void VfdController::setFrequency(float hz) {
     lastAction = "set frequency";
     requestedFrequencySet = true;
     requestedFrequencyHz = hz;
-    queueWriteSingle(0x2001, value);
+    communicationError = false;
+    queueWriteSingle(REG_COMMAND_FREQUENCY, value);
+}
+
+
+void VfdController::pollStatus() {
+    if (!initialized) {
+        return;
+    }
+
+    if (pollFrequencyNext) {
+        monitorFrequencyToken = queueReadHolding(REG_OPERATION_FREQUENCY, 2);
+    } else {
+        statusWordToken = queueReadHolding(REG_STATUS_WORD, 1);
+    }
+
+    pollFrequencyNext = !pollFrequencyNext;
 }
 
 
@@ -92,6 +125,41 @@ bool VfdController::isInitialized() const {
 }
 
 
+bool VfdController::isOnline() const {
+    return initialized && !communicationError && activitySeen && okCount > 0 && millis() - lastOkMs <= ONLINE_TIMEOUT_MS;
+}
+
+
+bool VfdController::hasEverBeenOnline() const {
+    return everOnline;
+}
+
+
+bool VfdController::hasCommunicationError() const {
+    return communicationError;
+}
+
+
+bool VfdController::hasStatusWord() const {
+    return statusWordSet;
+}
+
+
+uint16_t VfdController::getStatusWord() const {
+    return statusWord;
+}
+
+
+bool VfdController::isRunning() const {
+    return running;
+}
+
+
+bool VfdController::isCommandedRunning() const {
+    return commandedRunning;
+}
+
+
 const char* VfdController::getLastAction() const {
     return lastAction;
 }
@@ -104,6 +172,21 @@ bool VfdController::hasRequestedFrequency() const {
 
 float VfdController::getRequestedFrequencyHz() const {
     return requestedFrequencyHz;
+}
+
+
+bool VfdController::hasActualFrequency() const {
+    return actualFrequencySet;
+}
+
+
+float VfdController::getActualFrequencyHz() const {
+    return actualFrequencyHz;
+}
+
+
+uint8_t VfdController::getActualStep() const {
+    return actualStep;
 }
 
 
@@ -151,7 +234,20 @@ uint32_t VfdController::nextToken() {
 }
 
 
-void VfdController::queueReadHolding(uint16_t address, uint16_t count) {
+uint8_t VfdController::frequencyToStep(float hz) const {
+    if (hz < 20.0f) {
+        return 0;
+    }
+
+    if (hz >= 50.0f) {
+        return 6;
+    }
+
+    return 1 + (uint8_t)((hz - 20.0f) / 6.0f);
+}
+
+
+uint32_t VfdController::queueReadHolding(uint16_t address, uint16_t count) {
     uint32_t token = nextToken();
     requestCount++;
     lastToken = token;
@@ -167,10 +263,12 @@ void VfdController::queueReadHolding(uint16_t address, uint16_t count) {
     if (error != SUCCESS) {
         onError(error, token);
     }
+
+    return token;
 }
 
 
-void VfdController::queueWriteSingle(uint16_t address, uint16_t value) {
+uint32_t VfdController::queueWriteSingle(uint16_t address, uint16_t value) {
     uint32_t token = nextToken();
     requestCount++;
     lastToken = token;
@@ -186,6 +284,8 @@ void VfdController::queueWriteSingle(uint16_t address, uint16_t value) {
     if (error != SUCCESS) {
         onError(error, token);
     }
+
+    return token;
 }
 
 
@@ -193,9 +293,36 @@ void VfdController::onData(ModbusMessage msg, uint32_t token) {
     okCount++;
     lastToken = token;
     activitySeen = true;
+    everOnline = true;
+    communicationError = false;
     lastActivityMs = millis();
+    lastOkMs = lastActivityMs;
 
-    Logger::infof(
+    if (token == statusWordToken && msg.size() >= 5 && msg.getFunctionCode() == READ_HOLD_REGISTER) {
+        statusWord = ((uint16_t)msg[3] << 8) | msg[4];
+        statusWordSet = true;
+        running = statusWord == 0x0001 || statusWord == 0x0002;
+        Logger::tracef(TAG_VFD, "Status word 0x%04X running=%u", statusWord, running ? 1 : 0);
+    }
+
+    if (token == monitorFrequencyToken && msg.size() >= 7 && msg.getFunctionCode() == READ_HOLD_REGISTER) {
+        const uint16_t rawFrequency = ((uint16_t)msg[3] << 8) | msg[4];
+        const uint16_t rawSettingFrequency = ((uint16_t)msg[5] << 8) | msg[6];
+        actualFrequencyHz = rawFrequency / 100.0f;
+        actualFrequencySet = true;
+        actualStep = frequencyToStep(actualFrequencyHz);
+        requestedFrequencySet = true;
+        requestedFrequencyHz = rawSettingFrequency / 100.0f;
+        Logger::tracef(
+            TAG_VFD,
+            "Monitor output %.2f Hz step %u setting %.2f Hz",
+            actualFrequencyHz,
+            actualStep,
+            requestedFrequencyHz
+        );
+    }
+
+    Logger::tracef(
         TAG_VFD,
         "OK token=%lu server=%u FC=%u len=%u",
         (unsigned long)token,
@@ -215,12 +342,24 @@ void VfdController::onData(ModbusMessage msg, uint32_t token) {
         offset += snprintf(data + offset, sizeof(data) - offset, "%02X ", byteValue);
     }
 
-    Logger::debugf(TAG_VFD, "Data: %s", data);
+    Logger::tracef(TAG_VFD, "Data: %s", data);
 }
 
 
 void VfdController::onError(Error error, uint32_t token) {
     ModbusError modbusError(error);
+
+    if (isCrcNoise(error)) {
+        Logger::tracef(
+            TAG_VFD,
+            "ERR token=%lu code=%02X (%s)",
+            (unsigned long)token,
+            (uint8_t)error,
+            (const char*)modbusError
+        );
+        return;
+    }
+
     errorCount++;
     lastToken = token;
     lastErrorCode = (uint8_t)error;

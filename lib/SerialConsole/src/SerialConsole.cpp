@@ -733,33 +733,28 @@ void SerialConsole::processDisplayCommand(const String& cmd) {
             println("[DISPLAY] Controller action layer is not available");
             return;
         }
-    } else if (args == "temp" || args == "temperatures") {
-        if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::Temperatures)) {
-            println("[DISPLAY] Controller action layer is not available");
-            return;
-        }
     } else if (args == "ac") {
         if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::AirConditioner)) {
             println("[DISPLAY] Controller action layer is not available");
             return;
         }
-    } else if (args == "net" || args == "network") {
-        if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::Network)) {
+    } else if (args == "vent" || args == "ventilation") {
+        if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::Ventilation)) {
             println("[DISPLAY] Controller action layer is not available");
             return;
         }
-    } else if (args == "font1" || args == "fonts1") {
-        if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::FontTest1)) {
+    } else if (args == "temp" || args == "temperatures") {
+        if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::Temperatures)) {
             println("[DISPLAY] Controller action layer is not available");
             return;
         }
-    } else if (args == "font2" || args == "fonts2") {
-        if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::FontTest2)) {
+    } else if (args == "settings" || args == "net" || args == "network") {
+        if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::Settings)) {
             println("[DISPLAY] Controller action layer is not available");
             return;
         }
-    } else if (args == "font3" || args == "fonts3") {
-        if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::FontTest3)) {
+    } else if (args == "diag" || args == "diagnostics") {
+        if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::Diagnostics)) {
             println("[DISPLAY] Controller action layer is not available");
             return;
         }
@@ -1329,12 +1324,11 @@ void SerialConsole::printDisplayHelp() {
     println("display next");
     println("display prev");
     println("display overview");
-    println("display temp");
     println("display ac");
-    println("display network");
-    println("display font1");
-    println("display font2");
-    println("display font3");
+    println("display ventilation");
+    println("display temp");
+    println("display settings");
+    println("display diagnostics");
     println("------------------------");
     println();
 }
