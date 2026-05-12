@@ -30,9 +30,21 @@
 #define HA_PUBLISH_INTERVAL_MS 3000UL
 #endif
 
-// How often ESP32 retries MQTT connection when broker is unavailable.
+// Base MQTT reconnect interval (ms) when broker is unavailable.
+// Keep this fairly large: MQTT connect can block the main loop for a short time.
 #ifndef HA_RECONNECT_INTERVAL_MS
-#define HA_RECONNECT_INTERVAL_MS 5000UL
+#define HA_RECONNECT_INTERVAL_MS 60000UL
+#endif
+
+// Maximum retry interval after repeated MQTT connection failures (ms).
+#ifndef HA_RECONNECT_BACKOFF_MAX_MS
+#define HA_RECONNECT_BACKOFF_MAX_MS 300000UL
+#endif
+
+// MQTT packet wait timeout in seconds. Lower value reduces worst-case stalls
+// when the broker is reachable by TCP but does not complete MQTT handshake.
+#ifndef HA_MQTT_SOCKET_TIMEOUT_SECONDS
+#define HA_MQTT_SOCKET_TIMEOUT_SECONDS 1
 #endif
 
 class HomeAssistantBridge {
@@ -73,14 +85,18 @@ private:
     DeviceState* state = nullptr;
     DeviceController* controller = nullptr;
     unsigned long lastReconnectAttemptMs = 0;
+    unsigned long reconnectIntervalMs = HA_RECONNECT_INTERVAL_MS;
     unsigned long lastPublishMs = 0;
     uint32_t reconnectCount = 0;
     uint32_t publishCount = 0;
     uint32_t commandCount = 0;
+    uint8_t reconnectFailureCount = 0;
+    bool reconnectAttempted = false;
     bool publishedOnce = false;
     bool discoveryPublished = false;
 
     static constexpr unsigned long RECONNECT_INTERVAL_MS = HA_RECONNECT_INTERVAL_MS;
+    static constexpr unsigned long RECONNECT_BACKOFF_MAX_MS = HA_RECONNECT_BACKOFF_MAX_MS;
     static constexpr unsigned long PUBLISH_INTERVAL_MS = HA_PUBLISH_INTERVAL_MS;
     static HomeAssistantBridge* activeInstance;
 

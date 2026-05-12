@@ -66,10 +66,49 @@ struct HomeAssistantStateSnapshot {
     unsigned long lastPublishAgeMs = 0;
 };
 
+enum class DeviceMode : uint8_t {
+    Auto = 0,
+    Manual,
+    Safe,
+    Disabled
+};
+
+enum class ControllerActivity : uint8_t {
+    Start = 0,
+    Normal,
+    VentCool,
+    AcCool,
+    Heat,
+    Vent,
+    Error,
+    Hold,
+    Idle,
+};
+
+struct ControllerStateSnapshot {
+    DeviceMode mode = DeviceMode::Auto;
+    ControllerActivity activity = ControllerActivity::Normal;
+    uint8_t warningCount = 1;
+    uint8_t errorCount = 1;
+};
+
+struct EnvironmentStateSnapshot {
+    bool hasIndoorTemp = false;
+    bool hasOutdoorTemp = false;
+    float indoorTempC = DEVICE_DISCONNECTED_C;
+    float outdoorTempC = DEVICE_DISCONNECTED_C;
+    float targetIndoorTempC = 22.0f;
+    float targetToleranceC = 1.0f;
+    uint8_t kitchenHoodLevel = 0;
+    bool exhaustVentEnabled = false;
+};
+
 struct DeviceState {
     bool wifiConnected = false;
     IPAddress ip;
 
+    ControllerStateSnapshot controllerState;
+    EnvironmentStateSnapshot environment;
     AcStateSnapshot ac;
     TemperatureStateSnapshot temperatures;
     VfdStateSnapshot vfd;

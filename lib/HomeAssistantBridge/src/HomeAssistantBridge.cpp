@@ -40,6 +40,8 @@ void HomeAssistantBridge::begin(
     activeInstance = this;
     mqttClient.setServer(host, port);
     mqttClient.setCallback(&HomeAssistantBridge::handleMqttMessage);
+    mqttClient.setSocketTimeout(HA_MQTT_SOCKET_TIMEOUT_SECONDS);
+    mqttClient.setKeepAlive(15);
 
     Logger::infof(TAG_HA, "MQTT bridge configured for %s:%u", host, port);
 }
@@ -56,7 +58,8 @@ void HomeAssistantBridge::update(bool networkConnected) {
     if (!mqttClient.connected()) {
         const unsigned long now = millis();
 
-        if (now - lastReconnectAttemptMs >= RECONNECT_INTERVAL_MS) {
+        if (!reconnectAttempted || now - lastReconnectAttemptMs >= reconnectIntervalMs) {
+            reconnectAttempted = true;
             lastReconnectAttemptMs = now;
             reconnect();
         }
@@ -106,7 +109,7 @@ unsigned long HomeAssistantBridge::getLastPublishAgeMs() const {
 }
 
 void HomeAssistantBridge::reconnect() {
-    Logger::info(TAG_HA, "Connecting to MQTT broker...");
+    Logger::infof(TAG_HA, "Connecting to MQTT broker... retry interval=%lu ms", reconnectIntervalMs);
 
     char availabilityTopic[96];
     snprintf(availabilityTopic, sizeof(availabilityTopic), "%s/status", baseTopic);
@@ -120,12 +123,37 @@ void HomeAssistantBridge::reconnect() {
     }
 
     if (!connected) {
-        Logger::warningf(TAG_HA, "MQTT connect failed, state=%d", mqttClient.state());
+        if (reconnectFailureCount < 8) {
+            reconnectFailureCount++;
+        }
+
+        unsigned long nextIntervalMs = RECONNECT_INTERVAL_MS;
+        for (uint8_t i = 1; i < reconnectFailureCount; i++) {
+            if (nextIntervalMs >= RECONNECT_BACKOFF_MAX_MS / 2) {
+                nextIntervalMs = RECONNECT_BACKOFF_MAX_MS;
+                break;
+            }
+            nextIntervalMs *= 2;
+        }
+
+        if (nextIntervalMs > RECONNECT_BACKOFF_MAX_MS) {
+            nextIntervalMs = RECONNECT_BACKOFF_MAX_MS;
+        }
+
+        reconnectIntervalMs = nextIntervalMs;
+        Logger::warningf(
+            TAG_HA,
+            "MQTT connect failed, state=%d, next retry in %lu ms",
+            mqttClient.state(),
+            reconnectIntervalMs
+        );
         return;
     }
 
     Logger::info(TAG_HA, "MQTT connected");
     reconnectCount++;
+    reconnectFailureCount = 0;
+    reconnectIntervalMs = RECONNECT_INTERVAL_MS;
     publishAvailability(true);
     publishDiscovery();
     subscribeCommands();
@@ -218,7 +246,7 @@ void HomeAssistantBridge::publishDiscovery() {
         "climate_controller_display_page",
         "state/display/page",
         "cmd/display/page",
-        "[\"overview\",\"temp\",\"ac\",\"network\",\"next\",\"prev\"]"
+        "[\"overview\",\"temp\",\"ac\",\"network\",\"font1\",\"font2\",\"font3\",\"next\",\"prev\"]"
     );
 
     discoveryPublished = true;
@@ -504,6 +532,12 @@ void HomeAssistantBridge::handleCommand(const String& suffix, const String& payl
             controller->displaySetPage(DisplayUi::Page::AirConditioner);
         } else if (payload == "network") {
             controller->displaySetPage(DisplayUi::Page::Network);
+        } else if (payload == "font1") {
+            controller->displaySetPage(DisplayUi::Page::FontTest1);
+        } else if (payload == "font2") {
+            controller->displaySetPage(DisplayUi::Page::FontTest2);
+        } else if (payload == "font3") {
+            controller->displaySetPage(DisplayUi::Page::FontTest3);
         }
     } else if (suffix == "vfd/run") {
         if (payload == "fwd" || payload == "forward") {
@@ -602,6 +636,12 @@ const char* HomeAssistantBridge::displayPageName(uint8_t pageIndex) const {
             return "ac";
         case 3:
             return "network";
+        case 4:
+            return "font1";
+        case 5:
+            return "font2";
+        case 6:
+            return "font3";
         default:
             return "unknown";
     }

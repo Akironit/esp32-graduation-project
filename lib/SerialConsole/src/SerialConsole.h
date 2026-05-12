@@ -13,6 +13,9 @@
 #include "DeviceController.h"
 #include "Logger.h"
 
+#ifndef ENABLE_STATE_DEBUG_COMMANDS
+#define ENABLE_STATE_DEBUG_COMMANDS 1
+#endif
 
 class SerialConsole {
 public:
@@ -76,6 +79,9 @@ private:
     void processDisplayCommand(const String& cmd);
     void processLogCommand(const String& cmd);
     void processStateCommand(const String& cmd);
+#if ENABLE_STATE_DEBUG_COMMANDS
+    void processDebugCommand(const String& cmd);
+#endif
 
     void printHelp();
     void printAcHelp();
@@ -83,6 +89,10 @@ private:
     void printDisplayHelp();
     void printLogHelp();
     void printStateHelp();
+#if ENABLE_STATE_DEBUG_COMMANDS
+    void printDebugHelp();
+    void printDebugStatus();
+#endif
     void printStateStatus();
     void printTemperatureStateStatus();
     void printDisplayStateStatus();
@@ -90,6 +100,12 @@ private:
 
     uint16_t parseHexU16(const String& value, bool& ok);
     bool parseLogLevel(const String& value, LogLevel& level);
+#if ENABLE_STATE_DEBUG_COMMANDS
+    bool parseDeviceMode(const String& value, DeviceMode& mode);
+    bool parseControllerActivity(const String& value, ControllerActivity& activity);
+#endif
+    const char* deviceModeName(DeviceMode mode) const;
+    const char* controllerActivityName(ControllerActivity activity) const;
 
     void print(const String& value);
     void print(const char* value);

@@ -326,6 +326,28 @@ void SerialConsole::processCommand(const String& cmd) {
         return;
     }
 
+#if ENABLE_STATE_DEBUG_COMMANDS
+    if (cmd == "debug help" || cmd == "dbg help") {
+        printDebugHelp();
+        return;
+    }
+
+    if (cmd == "debug" || cmd == "debug status" || cmd == "dbg" || cmd == "dbg status") {
+        printDebugStatus();
+        return;
+    }
+
+    if (cmd.startsWith("debug ")) {
+        processDebugCommand(cmd.substring(6));
+        return;
+    }
+
+    if (cmd.startsWith("dbg ")) {
+        processDebugCommand(cmd.substring(4));
+        return;
+    }
+#endif
+
     if (cmd.startsWith("state ")) {
         processStateCommand(cmd.substring(6));
         return;
@@ -726,6 +748,21 @@ void SerialConsole::processDisplayCommand(const String& cmd) {
             println("[DISPLAY] Controller action layer is not available");
             return;
         }
+    } else if (args == "font1" || args == "fonts1") {
+        if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::FontTest1)) {
+            println("[DISPLAY] Controller action layer is not available");
+            return;
+        }
+    } else if (args == "font2" || args == "fonts2") {
+        if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::FontTest2)) {
+            println("[DISPLAY] Controller action layer is not available");
+            return;
+        }
+    } else if (args == "font3" || args == "fonts3") {
+        if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::FontTest3)) {
+            println("[DISPLAY] Controller action layer is not available");
+            return;
+        }
     } else {
         println("[DISPLAY] Unknown display command. Use: display help");
         return;
@@ -792,6 +829,161 @@ void SerialConsole::processStateCommand(const String& cmd) {
     println("[STATE] Unknown state command. Use: state help");
 }
 
+#if ENABLE_STATE_DEBUG_COMMANDS
+void SerialConsole::processDebugCommand(const String& cmd) {
+    String args = cmd;
+    args.trim();
+
+    if (state == nullptr) {
+        println("[DEBUG] DeviceState is not connected to console");
+        return;
+    }
+
+    if (args == "help") {
+        printDebugHelp();
+        return;
+    }
+
+    if (args == "status") {
+        printDebugStatus();
+        return;
+    }
+
+    if (args.startsWith("m ")) {
+        args = "mode " + args.substring(2);
+    } else if (args.startsWith("a ")) {
+        args = "activity " + args.substring(2);
+    } else if (args.startsWith("h ")) {
+        args = "hood " + args.substring(2);
+    } else if (args.startsWith("e ")) {
+        args = "exhaust " + args.substring(2);
+    } else if (args.startsWith("w ")) {
+        args = "warn " + args.substring(2);
+    } else if (args.startsWith("err ")) {
+        args = "error " + args.substring(4);
+    }
+
+    if (args.startsWith("mode ")) {
+        DeviceMode mode = DeviceMode::Auto;
+
+        if (!parseDeviceMode(args.substring(5), mode)) {
+            println("[DEBUG] Unknown mode. Use: auto/manual/safe/off");
+            return;
+        }
+
+        state->controllerState.mode = mode;
+        print("[DEBUG] Device mode set to ");
+        println(deviceModeName(mode));
+        return;
+    }
+
+    if (args.startsWith("activity ")) {
+        ControllerActivity activity = ControllerActivity::Normal;
+
+        if (!parseControllerActivity(args.substring(9), activity)) {
+            println("[DEBUG] Unknown activity. Use: start/normal/ventcool/accool/heat/vent/error/hold/idle");
+            return;
+        }
+
+        state->controllerState.activity = activity;
+        print("[DEBUG] Controller activity set to ");
+        println(controllerActivityName(activity));
+        return;
+    }
+
+    if (args.startsWith("hood ")) {
+        const int level = args.substring(5).toInt();
+
+        if (level < 0 || level > 3) {
+            println("[DEBUG] Hood level must be 0-3");
+            return;
+        }
+
+        state->environment.kitchenHoodLevel = (uint8_t)level;
+        print("[DEBUG] Kitchen hood level set to ");
+        println(level);
+        return;
+    }
+
+    if (args.startsWith("exhaust ")) {
+        const String value = args.substring(8);
+
+        if (value == "on" || value == "1") {
+            state->environment.exhaustVentEnabled = true;
+        } else if (value == "off" || value == "0") {
+            state->environment.exhaustVentEnabled = false;
+        } else {
+            println("[DEBUG] Exhaust value must be on/off");
+            return;
+        }
+
+        print("[DEBUG] Exhaust ventilation set to ");
+        println(state->environment.exhaustVentEnabled ? "ON" : "OFF");
+        return;
+    }
+
+    if (args.startsWith("room ")) {
+        const float value = args.substring(5).toFloat();
+
+        if (value < 5.0f || value > 40.0f) {
+            println("[DEBUG] Room target must be 5-40 C");
+            return;
+        }
+
+        state->environment.targetIndoorTempC = value;
+        print("[DEBUG] Room target set to ");
+        print(value, 1);
+        println(" C");
+        return;
+    }
+
+    if (args.startsWith("delta ")) {
+        const float value = args.substring(6).toFloat();
+
+        if (value < 0.0f || value > 10.0f) {
+            println("[DEBUG] Delta must be 0-10 C");
+            return;
+        }
+
+        state->environment.targetToleranceC = value;
+        print("[DEBUG] Delta set to +/-");
+        print(value, 1);
+        println(" C");
+        return;
+    }
+
+    if (args.startsWith("warn ")) {
+        const int count = args.substring(5).toInt();
+
+        if (count < 0 || count > 99) {
+            println("[DEBUG] Warning count must be 0-99");
+            return;
+        }
+
+        state->controllerState.warningCount = (uint8_t)count;
+        print("[DEBUG] Warning count set to ");
+        println(count);
+        return;
+    }
+
+    if (args.startsWith("error ")) {
+        const int count = args.substring(6).toInt();
+
+        if (count < 0 || count > 99) {
+            println("[DEBUG] Error count must be 0-99");
+            return;
+        }
+
+        state->controllerState.errorCount = (uint8_t)count;
+        print("[DEBUG] Error count set to ");
+        println(count);
+        return;
+    }
+
+    println("[DEBUG] Unknown debug command. Use: debug help");
+}
+#endif
+
 
 void SerialConsole::printStateStatus() {
     if (state == nullptr) {
@@ -816,6 +1008,38 @@ void SerialConsole::printStateStatus() {
     println(state->wifiConnected ? "CONNECTED" : "DISCONNECTED");
     print("IP: ");
     println(state->ip.toString());
+    println();
+
+    println("[CONTROLLER]");
+    print("Mode: ");
+    println(deviceModeName(state->controllerState.mode));
+    print("Activity: ");
+    println(controllerActivityName(state->controllerState.activity));
+    print("Warnings: ");
+    println((int)state->controllerState.warningCount);
+    print("Errors: ");
+    println((int)state->controllerState.errorCount);
+    println();
+
+    println("[ENVIRONMENT]");
+    print("Indoor temp: ");
+    if (state->environment.hasIndoorTemp) {
+        print(state->environment.indoorTempC, 2);
+        println(" C");
+    } else {
+        println("not available");
+    }
+    print("Outdoor temp: ");
+    if (state->environment.hasOutdoorTemp) {
+        print(state->environment.outdoorTempC, 2);
+        println(" C");
+    } else {
+        println("not available");
+    }
+    print("Kitchen hood: ");
+    println((int)state->environment.kitchenHoodLevel);
+    print("Exhaust vent: ");
+    println(state->environment.exhaustVentEnabled ? "ON" : "OFF");
     println();
 
     println("[AC]");
@@ -1033,6 +1257,9 @@ void SerialConsole::printHelp() {
     println("temp <command> - Temperature sensors control");
     println("display <cmd>  - LCD display pages");
     println("state <cmd>    - Device state snapshot");
+#if ENABLE_STATE_DEBUG_COMMANDS
+    println("debug <cmd>    - temporary UI state simulator");
+#endif
     println();
     println("Examples:");
     println("ac on");
@@ -1045,11 +1272,15 @@ void SerialConsole::printHelp() {
     println("temp read");
     println("display next");
     println("state status");
+#if ENABLE_STATE_DEBUG_COMMANDS
+    println("debug mode manual");
+    println("debug activity accool");
+#endif
     println("log level debug");
     println("log history");
     println("reboot");
     println();
-    println("Type 'ac help', 'vfd help', 'temp help', 'display help', 'state help' or 'log help'");
+    println("Type 'ac help', 'vfd help', 'temp help', 'display help', 'state help', 'debug help' or 'log help'");
     println("Other commands: reboot/restart");
     println("------------------------------");
     println();
@@ -1101,6 +1332,9 @@ void SerialConsole::printDisplayHelp() {
     println("display temp");
     println("display ac");
     println("display network");
+    println("display font1");
+    println("display font2");
+    println("display font3");
     println("------------------------");
     println();
 }
@@ -1130,6 +1364,55 @@ void SerialConsole::printStateHelp() {
     println("----------------------");
     println();
 }
+
+#if ENABLE_STATE_DEBUG_COMMANDS
+void SerialConsole::printDebugHelp() {
+    println();
+    println("--- DEBUG commands ---");
+    println("debug status");
+    println("debug mode auto/manual/safe/off    | dbg m a/man/s/off");
+    println("debug activity start/normal/ventcool/accool/heat/vent/error/hold/idle");
+    println("Short activity aliases: dbg a st/n/vc/ac/h/v/e/hold/i");
+    println("debug hood 0-3                    | dbg h 2");
+    println("debug exhaust on/off              | dbg e on");
+    println("debug room <tempC>");
+    println("debug delta <tempC>");
+    println("debug warn 0-99                   | dbg w 1");
+    println("debug error 0-99                  | dbg err 0");
+    println("----------------------");
+    println();
+}
+
+void SerialConsole::printDebugStatus() {
+    if (state == nullptr) {
+        println("[DEBUG] DeviceState is not connected to console");
+        return;
+    }
+
+    println();
+    println("--- DEBUG UI STATE ---");
+    print("Mode: ");
+    println(deviceModeName(state->controllerState.mode));
+    print("Activity: ");
+    println(controllerActivityName(state->controllerState.activity));
+    print("Kitchen hood: ");
+    println((int)state->environment.kitchenHoodLevel);
+    print("Exhaust vent: ");
+    println(state->environment.exhaustVentEnabled ? "ON" : "OFF");
+    print("Room target: ");
+    print(state->environment.targetIndoorTempC, 1);
+    println(" C");
+    print("Target delta: +/-");
+    print(state->environment.targetToleranceC, 1);
+    println(" C");
+    print("Warnings: ");
+    println((int)state->controllerState.warningCount);
+    print("Errors: ");
+    println((int)state->controllerState.errorCount);
+    println("----------------------");
+    println();
+}
+#endif
 
 
 uint16_t SerialConsole::parseHexU16(const String& value, bool& ok) {
@@ -1167,6 +1450,90 @@ bool SerialConsole::parseLogLevel(const String& value, LogLevel& level) {
     }
 
     return true;
+}
+
+#if ENABLE_STATE_DEBUG_COMMANDS
+bool SerialConsole::parseDeviceMode(const String& value, DeviceMode& mode) {
+    if (value == "auto" || value == "a") {
+        mode = DeviceMode::Auto;
+    } else if (value == "manual" || value == "man" || value == "m") {
+        mode = DeviceMode::Manual;
+    } else if (value == "safe" || value == "s") {
+        mode = DeviceMode::Safe;
+    } else if (value == "off" || value == "disabled" || value == "o") {
+        mode = DeviceMode::Disabled;
+    } else {
+        return false;
+    }
+
+    return true;
+}
+
+bool SerialConsole::parseControllerActivity(const String& value, ControllerActivity& activity) {
+    if (value == "start" || value == "st") {
+        activity = ControllerActivity::Start;
+    } else if (value == "normal" || value == "n") {
+        activity = ControllerActivity::Normal;
+    } else if (value == "ventcool" || value == "vent_cool" || value == "vent-cool" || value == "vc") {
+        activity = ControllerActivity::VentCool;
+    } else if (value == "accool" || value == "ac_cool" || value == "ac-cool" || value == "ac") {
+        activity = ControllerActivity::AcCool;
+    } else if (value == "heat" || value == "h") {
+        activity = ControllerActivity::Heat;
+    } else if (value == "vent" || value == "v") {
+        activity = ControllerActivity::Vent;
+    } else if (value == "error" || value == "err" || value == "e") {
+        activity = ControllerActivity::Error;
+    } else if (value == "hold") {
+        activity = ControllerActivity::Hold;
+    } else if (value == "idle" || value == "i") {
+        activity = ControllerActivity::Idle;
+    } else {
+        return false;
+    }
+
+    return true;
+}
+#endif
+
+const char* SerialConsole::deviceModeName(DeviceMode mode) const {
+    switch (mode) {
+        case DeviceMode::Auto:
+            return "AUTO";
+        case DeviceMode::Manual:
+            return "MANUAL";
+        case DeviceMode::Safe:
+            return "SAFE";
+        case DeviceMode::Disabled:
+            return "OFF";
+    }
+
+    return "?";
+}
+
+const char* SerialConsole::controllerActivityName(ControllerActivity activity) const {
+    switch (activity) {
+        case ControllerActivity::Start:
+            return "start";
+        case ControllerActivity::Normal:
+            return "normal";
+        case ControllerActivity::VentCool:
+            return "vent cool";
+        case ControllerActivity::AcCool:
+            return "AC cool";
+        case ControllerActivity::Heat:
+            return "heat";
+        case ControllerActivity::Vent:
+            return "vent";
+        case ControllerActivity::Error:
+            return "error";
+        case ControllerActivity::Hold:
+            return "hold";
+        case ControllerActivity::Idle:
+            return "idle";
+    }
+
+    return "?";
 }
 
 

@@ -141,6 +141,16 @@ void App::updateDeviceState() {
     for (uint8_t i = 0; i < TEMP_MAX_SENSORS; i++) {
         state.temperatures.values[i] = tempSensors.getTemperatureC(i);
     }
+    state.environment.hasIndoorTemp = state.temperatures.sensorCount > 0
+        && state.temperatures.values[0] != DEVICE_DISCONNECTED_C;
+    state.environment.hasOutdoorTemp = state.temperatures.sensorCount > 1
+        && state.temperatures.values[1] != DEVICE_DISCONNECTED_C;
+    state.environment.indoorTempC = state.environment.hasIndoorTemp
+        ? state.temperatures.values[0]
+        : DEVICE_DISCONNECTED_C;
+    state.environment.outdoorTempC = state.environment.hasOutdoorTemp
+        ? state.temperatures.values[1]
+        : DEVICE_DISCONNECTED_C;
 
     state.vfd.initialized = vfd.isInitialized();
     state.vfd.lastAction = vfd.getLastAction();
