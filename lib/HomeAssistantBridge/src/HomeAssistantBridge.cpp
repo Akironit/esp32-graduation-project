@@ -549,14 +549,33 @@ void HomeAssistantBridge::handleCommand(const String& suffix, const String& payl
         }
     } else if (suffix == "vfd/run") {
         if (payload == "fwd" || payload == "forward") {
+            if (state != nullptr) {
+                state->settings.manualVfdPower = true;
+                if (state->settings.manualVfdStep == 0) {
+                    state->settings.manualVfdStep = 1;
+                }
+            }
             controller->vfdForward("ha");
         } else if (payload == "rev" || payload == "reverse") {
+            if (state != nullptr) {
+                state->settings.manualVfdPower = true;
+                if (state->settings.manualVfdStep == 0) {
+                    state->settings.manualVfdStep = 1;
+                }
+            }
             controller->vfdReverse("ha");
         } else if (payload == "stop") {
+            if (state != nullptr) {
+                state->settings.manualVfdPower = false;
+            }
             controller->vfdStop("ha");
         }
     } else if (suffix == "vfd/hz") {
-        controller->vfdSetFrequency(payload.toFloat(), "ha");
+        const float hz = payload.toFloat();
+        if (state != nullptr && hz >= 20.0f) {
+            state->settings.manualVfdStep = hz >= 50.0f ? 6 : 1 + (uint8_t)((hz - 20.0f) / 6.0f);
+        }
+        controller->vfdSetFrequency(hz, "ha");
     }
 }
 

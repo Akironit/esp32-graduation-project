@@ -28,6 +28,30 @@ constexpr int16_t FOOTER_H = 24;
 // FF1 = FreeMono9pt7b
 // FF5 = FreeMonoBold9pt7b
 // FF21 = FreeSansBold9pt7b
+
+bool isAcTemperatureMode(uint8_t mode) {
+    return mode >= 1 && mode <= 5;
+}
+
+uint8_t normalizeAcTemperature(uint8_t temperature) {
+    return constrain(temperature, (uint8_t)16, (uint8_t)30);
+}
+
+uint8_t getAcModeTemperature(const UserSettingsSnapshot& settings, uint8_t mode) {
+    if (!isAcTemperatureMode(mode)) {
+        return normalizeAcTemperature(settings.manualAcTemperature);
+    }
+
+    return normalizeAcTemperature(settings.manualAcModeTemperatures[mode]);
+}
+
+void setAcModeTemperature(UserSettingsSnapshot& settings, uint8_t mode, uint8_t temperature) {
+    if (!isAcTemperatureMode(mode)) {
+        return;
+    }
+
+    settings.manualAcModeTemperatures[mode] = normalizeAcTemperature(temperature);
+}
 }
 
 void DisplayUi::begin() {
@@ -1075,7 +1099,9 @@ DisplayUi::Action DisplayUi::applyEdit(DeviceState& state) {
             }
             break;
         case OverviewParam::AcMode:
+            setAcModeTemperature(state.settings, state.settings.manualAcMode, state.settings.manualAcTemperature);
             state.settings.manualAcMode = acModeFromListIndex((uint8_t)editValue);
+            state.settings.manualAcTemperature = getAcModeTemperature(state.settings, state.settings.manualAcMode);
             Logger::infof(TAG_UI, "AC mode setting: %s", acModeTitle(state.settings.manualAcMode));
             action.settingsChanged = true;
             if (manualMode) {
@@ -1085,6 +1111,7 @@ DisplayUi::Action DisplayUi::applyEdit(DeviceState& state) {
             break;
         case OverviewParam::AcTemp:
             state.settings.manualAcTemperature = (uint8_t)editValue;
+            setAcModeTemperature(state.settings, state.settings.manualAcMode, state.settings.manualAcTemperature);
             Logger::infof(TAG_UI, "AC temp setting: %u C", state.settings.manualAcTemperature);
             action.settingsChanged = true;
             if (manualMode) {

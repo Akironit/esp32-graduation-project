@@ -264,16 +264,8 @@ void App::updateDeviceState() {
     for (uint8_t i = 0; i < TEMP_MAX_SENSORS; i++) {
         state.temperatures.values[i] = tempSensors.getTemperatureC(i);
     }
-    state.environment.hasIndoorTemp = state.temperatures.sensorCount > 0
-        && state.temperatures.values[0] != DEVICE_DISCONNECTED_C;
-    state.environment.hasOutdoorTemp = state.temperatures.sensorCount > 1
-        && state.temperatures.values[1] != DEVICE_DISCONNECTED_C;
-    state.environment.indoorTempC = state.environment.hasIndoorTemp
-        ? state.temperatures.values[0]
-        : DEVICE_DISCONNECTED_C;
-    state.environment.outdoorTempC = state.environment.hasOutdoorTemp
-        ? state.temperatures.values[1]
-        : DEVICE_DISCONNECTED_C;
+    state.environment.hasIndoorTemp = tempSensors.getTemperatureByRole(TempSensorRole::Indoor, state.environment.indoorTempC);
+    state.environment.hasOutdoorTemp = tempSensors.getTemperatureByRole(TempSensorRole::Outdoor, state.environment.outdoorTempC);
 
     state.vfd.initialized = vfd.isInitialized();
     state.vfd.online = vfd.isOnline();
@@ -500,6 +492,7 @@ void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
             break;
         case DisplayUi::ActionType::AcMode:
             controller.setAcMode(action.uintValue);
+            controller.setAcTemperature(state.settings.manualAcTemperature);
             break;
         case DisplayUi::ActionType::AcTemperature:
             controller.setAcTemperature(action.uintValue);
@@ -657,6 +650,15 @@ void App::loadUserSettings() {
     }
     state.settings.manualAcTemperature = preferences.getUChar("acTemp", state.settings.manualAcTemperature);
     state.settings.manualAcTemperature = constrain(state.settings.manualAcTemperature, (uint8_t)16, (uint8_t)30);
+    state.settings.manualAcModeTemperatures[1] = preferences.getUChar("acTempFan", state.settings.manualAcTemperature);
+    state.settings.manualAcModeTemperatures[2] = preferences.getUChar("acTempDry", state.settings.manualAcTemperature);
+    state.settings.manualAcModeTemperatures[3] = preferences.getUChar("acTempCool", state.settings.manualAcTemperature);
+    state.settings.manualAcModeTemperatures[4] = preferences.getUChar("acTempHeat", state.settings.manualAcTemperature);
+    state.settings.manualAcModeTemperatures[5] = preferences.getUChar("acTempAuto", state.settings.manualAcTemperature);
+    for (uint8_t i = 1; i <= 5; i++) {
+        state.settings.manualAcModeTemperatures[i] = constrain(state.settings.manualAcModeTemperatures[i], (uint8_t)16, (uint8_t)30);
+    }
+    state.settings.manualAcTemperature = state.settings.manualAcModeTemperatures[state.settings.manualAcMode];
     state.settings.manualAcFanMode = preferences.getUChar("acFan", state.settings.manualAcFanMode);
     if (state.settings.manualAcFanMode > 4) {
         state.settings.manualAcFanMode = 0;
@@ -718,6 +720,11 @@ void App::saveUserSettings() {
     preferences.putBool("acPower", state.settings.manualAcPower);
     preferences.putUChar("acMode", state.settings.manualAcMode);
     preferences.putUChar("acTemp", state.settings.manualAcTemperature);
+    preferences.putUChar("acTempFan", state.settings.manualAcModeTemperatures[1]);
+    preferences.putUChar("acTempDry", state.settings.manualAcModeTemperatures[2]);
+    preferences.putUChar("acTempCool", state.settings.manualAcModeTemperatures[3]);
+    preferences.putUChar("acTempHeat", state.settings.manualAcModeTemperatures[4]);
+    preferences.putUChar("acTempAuto", state.settings.manualAcModeTemperatures[5]);
     preferences.putUChar("acFan", state.settings.manualAcFanMode);
     preferences.putBool("vfdPower", state.settings.manualVfdPower);
     preferences.putUChar("vfdStep", state.settings.manualVfdStep);

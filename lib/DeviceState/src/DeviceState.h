@@ -119,6 +119,7 @@ struct UserSettingsSnapshot {
     bool manualAcPower = false;
     uint8_t manualAcMode = 5;
     uint8_t manualAcTemperature = 22;
+    uint8_t manualAcModeTemperatures[6] = {22, 22, 22, 22, 22, 22};
     uint8_t manualAcFanMode = 0;
     bool manualVfdPower = false;
     uint8_t manualVfdStep = 0;

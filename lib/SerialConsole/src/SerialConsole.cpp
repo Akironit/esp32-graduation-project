@@ -1540,8 +1540,8 @@ void SerialConsole::processTempCommand(const String& cmd) {
         return;
     }
 
-    if (args.length() == 0 || args == "status") {
-        printTemperatureStateStatus();
+    if (args.length() == 0 || args == "status" || args == "list") {
+        temp->printStatus(consoleOutput);
         return;
     }
 
@@ -1565,13 +1565,80 @@ void SerialConsole::processTempCommand(const String& cmd) {
         return;
     }
 
+    if (args.startsWith("assign ")) {
+        const int roleSeparator = args.lastIndexOf(' ');
+        if (roleSeparator <= 7) {
+            println("[TEMP] Format: temp assign <index|address> indoor|outdoor|unknown|unused");
+            return;
+        }
+
+        String selector = args.substring(7, roleSeparator);
+        String roleText = args.substring(roleSeparator + 1);
+        selector.trim();
+        roleText.trim();
+        roleText.toLowerCase();
+
+        TempSensorRole role = TempSensorRole::Unknown;
+        if (roleText == "indoor" || roleText == "in") {
+            role = TempSensorRole::Indoor;
+        } else if (roleText == "outdoor" || roleText == "out") {
+            role = TempSensorRole::Outdoor;
+        } else if (roleText == "unused" || roleText == "off") {
+            role = TempSensorRole::Unused;
+        } else if (roleText == "unknown" || roleText == "clear") {
+            role = TempSensorRole::Unknown;
+        } else {
+            println("[TEMP] Role must be indoor, outdoor, unknown or unused");
+            return;
+        }
+
+        const int index = temp->findEntryBySelector(selector);
+        if (index < 0 || !temp->assignRole((uint8_t)index, role)) {
+            println("[TEMP] Sensor not found");
+            return;
+        }
+
+        println("[TEMP] Sensor role saved");
+        temp->printStatus(consoleOutput);
+        return;
+    }
+
+    if (args.startsWith("forget ")) {
+        String selector = args.substring(7);
+        selector.trim();
+        const int index = temp->findEntryBySelector(selector);
+        if (index < 0 || !temp->forget((uint8_t)index)) {
+            println("[TEMP] Sensor not found");
+            return;
+        }
+
+        println("[TEMP] Sensor forgotten");
+        temp->printStatus(consoleOutput);
+        return;
+    }
+
+    if (args == "swap") {
+        if (!temp->swapRoles()) {
+            println("[TEMP] Swap failed: Indoor and Outdoor roles must both be assigned");
+            return;
+        }
+
+        println("[TEMP] Indoor and Outdoor roles swapped");
+        temp->printStatus(consoleOutput);
+        return;
+    }
+
     if (args == "help") {
         println();
         println("[TEMP] Commands:");
-        println("  temp status   - show last temperature readings");
-        println("  temp read     - force temperature reading and show result");
-        println("  temp scan     - rescan OneWire bus and show addresses");
-        println("  temp help     - show this help");
+        println("  temp list                         - show known DS18B20 sensors");
+        println("  temp status                       - same as temp list");
+        println("  temp read                         - force temperature reading and show list");
+        println("  temp scan                         - rescan OneWire bus and show addresses");
+        println("  temp assign <index|address> indoor|outdoor|unknown|unused");
+        println("  temp forget <index|address>       - remove sensor from known registry");
+        println("  temp swap                         - swap Indoor and Outdoor roles");
+        println("  temp help                         - show this help");
         return;
     }
 
