@@ -47,8 +47,11 @@ public:
     uint8_t getLastErrorCode() const;
     bool hasActivity() const;
     unsigned long getLastActivityAgeMs() const;
+    bool isBusy() const;
 
 private:
+    static constexpr unsigned long REQUEST_TIMEOUT_GUARD_MS = 1000;
+
     ModbusClientRTU client;
     uint32_t tokenCounter = 1;
     bool initialized = false;
@@ -65,6 +68,8 @@ private:
     uint32_t requestCount = 0;
     uint32_t okCount = 0;
     uint32_t errorCount = 0;
+    uint32_t crcErrorCount = 0;
+    uint8_t consecutiveErrorCount = 0;
     uint32_t lastToken = 0;
     uint8_t lastErrorCode = 0;
     bool activitySeen = false;
@@ -75,6 +80,9 @@ private:
     uint32_t statusWordToken = 0;
     uint32_t monitorFrequencyToken = 0;
     bool pollFrequencyNext = false;
+    bool requestInFlight = false;
+    uint32_t inFlightToken = 0;
+    unsigned long requestStartedMs = 0;
 
     uint32_t nextToken();
     uint8_t frequencyToStep(float hz) const;

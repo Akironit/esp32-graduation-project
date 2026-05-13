@@ -67,9 +67,6 @@ void VfdController::reverse() {
 void VfdController::stop() {
     lastAction = "stop";
     commandedRunning = false;
-    actualFrequencySet = true;
-    actualFrequencyHz = 0.0f;
-    actualStep = 0;
     communicationError = false;
     queueWriteSingle(0x2000, 0x0005);
 }
@@ -136,7 +133,7 @@ bool VfdController::hasEverBeenOnline() const {
 
 
 bool VfdController::hasCommunicationError() const {
-    return communicationError;
+    return communicationError || (everOnline && millis() - lastOkMs > ONLINE_TIMEOUT_MS);
 }
 
 
@@ -229,6 +226,19 @@ unsigned long VfdController::getLastActivityAgeMs() const {
 }
 
 
+bool VfdController::isBusy() const {
+    if (!requestInFlight) {
+        return false;
+    }
+
+    if (millis() - requestStartedMs > REQUEST_TIMEOUT_GUARD_MS) {
+        return false;
+    }
+
+    return true;
+}
+
+
 uint32_t VfdController::nextToken() {
     return tokenCounter++;
 }
@@ -248,6 +258,11 @@ uint8_t VfdController::frequencyToStep(float hz) const {
 
 
 uint32_t VfdController::queueReadHolding(uint16_t address, uint16_t count) {
+    if (isBusy()) {
+        Logger::tracef(TAG_VFD, "Request skipped: Modbus busy token=%lu", (unsigned long)inFlightToken);
+        return 0;
+    }
+
     uint32_t token = nextToken();
     requestCount++;
     lastToken = token;
@@ -262,6 +277,10 @@ uint32_t VfdController::queueReadHolding(uint16_t address, uint16_t count) {
 
     if (error != SUCCESS) {
         onError(error, token);
+    } else {
+        requestInFlight = true;
+        inFlightToken = token;
+        requestStartedMs = millis();
     }
 
     Logger::tracef(
@@ -277,6 +296,11 @@ uint32_t VfdController::queueReadHolding(uint16_t address, uint16_t count) {
 
 
 uint32_t VfdController::queueWriteSingle(uint16_t address, uint16_t value) {
+    if (isBusy()) {
+        Logger::tracef(TAG_VFD, "Request skipped: Modbus busy token=%lu", (unsigned long)inFlightToken);
+        return 0;
+    }
+
     uint32_t token = nextToken();
     requestCount++;
     lastToken = token;
@@ -291,6 +315,10 @@ uint32_t VfdController::queueWriteSingle(uint16_t address, uint16_t value) {
 
     if (error != SUCCESS) {
         onError(error, token);
+    } else {
+        requestInFlight = true;
+        inFlightToken = token;
+        requestStartedMs = millis();
     }
 
     Logger::tracef(
@@ -306,11 +334,16 @@ uint32_t VfdController::queueWriteSingle(uint16_t address, uint16_t value) {
 
 
 void VfdController::onData(ModbusMessage msg, uint32_t token) {
+    if (token == inFlightToken) {
+        requestInFlight = false;
+    }
+
     okCount++;
     lastToken = token;
     activitySeen = true;
     everOnline = true;
     communicationError = false;
+    consecutiveErrorCount = 0;
     lastActivityMs = millis();
     lastOkMs = lastActivityMs;
 
@@ -366,6 +399,20 @@ void VfdController::onError(Error error, uint32_t token) {
     ModbusError modbusError(error);
 
     if (isCrcNoise(error)) {
+        if (token == inFlightToken) {
+            requestInFlight = false;
+        }
+
+        crcErrorCount++;
+        consecutiveErrorCount++;
+        lastToken = token;
+        lastErrorCode = (uint8_t)error;
+        activitySeen = true;
+        lastActivityMs = millis();
+        if (consecutiveErrorCount >= 3) {
+            communicationError = true;
+        }
+
         Logger::tracef(
             TAG_VFD,
             "ERR token=%lu code=%02X (%s)",
@@ -376,11 +423,18 @@ void VfdController::onError(Error error, uint32_t token) {
         return;
     }
 
+    if (token == inFlightToken) {
+        requestInFlight = false;
+    }
+
     errorCount++;
+    consecutiveErrorCount++;
     lastToken = token;
     lastErrorCode = (uint8_t)error;
     activitySeen = true;
-    communicationError = true;
+    if (consecutiveErrorCount >= 3 || (lastOkMs > 0 && millis() - lastOkMs > ONLINE_TIMEOUT_MS)) {
+        communicationError = true;
+    }
     lastActivityMs = millis();
 
     Logger::errorf(

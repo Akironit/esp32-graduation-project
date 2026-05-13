@@ -8,10 +8,11 @@ constexpr const char* TAG_INPUT = "INPUT";
 constexpr const char* TAG_SETTINGS = "SETTINGS";
 constexpr const char* TAG_VFD_UI = "VFD_UI";
 constexpr unsigned long BUTTON_POLL_INTERVAL_MS = 10;
-constexpr unsigned long VFD_STATUS_POLL_INTERVAL_MS = 5000;
-constexpr unsigned long VFD_COMMAND_SYNC_INTERVAL_MS = 2500;
-constexpr unsigned long VFD_POLL_AFTER_COMMAND_GUARD_MS = 700;
+constexpr unsigned long VFD_STATUS_POLL_INTERVAL_MS = 1000;
+constexpr unsigned long VFD_COMMAND_SYNC_INTERVAL_MS = 500;
+constexpr unsigned long VFD_POLL_AFTER_COMMAND_GUARD_MS = 250;
 constexpr uint8_t VFD_COMMAND_SYNC_MAX_ATTEMPTS = 10;
+constexpr unsigned long SETTINGS_SAVE_DELAY_MS = 2000;
 constexpr const char* SETTINGS_NAMESPACE = "climate";
 
 volatile bool mcpInterruptA = false;
@@ -101,6 +102,7 @@ void App::update() {
 
     updateDeviceState();
     display.update(state);
+    updateDeferredSettingsSave();
     updateHeatPump();
     updateIoExpanderInputs();
 
@@ -115,6 +117,14 @@ void App::updateHeatPump() {
 
 
 void App::updateVfdStatus() {
+    if (vfd.isBusy()) {
+        return;
+    }
+
+    if (vfdCommandSyncActive) {
+        return;
+    }
+
     const unsigned long now = millis();
     if (now - lastVfdStatusPollMs < VFD_STATUS_POLL_INTERVAL_MS) {
         return;
@@ -131,6 +141,10 @@ void App::updateVfdStatus() {
 
 bool App::updateVfdCommandSync() {
     if (!vfdCommandSyncActive || state.controllerState.mode != DeviceMode::Manual) {
+        return false;
+    }
+
+    if (vfd.isBusy()) {
         return false;
     }
 
@@ -179,12 +193,12 @@ bool App::updateVfdCommandSync() {
     );
 
     if (!state.settings.manualVfdPower) {
-        controller.vfdStop();
+        controller.vfdStop("auto", vfdCommandSyncActive);
         return true;
     }
 
     if (!vfd.isRunning()) {
-        controller.vfdForward();
+        controller.vfdForward("auto", vfdCommandSyncActive);
         return true;
     }
 
@@ -198,11 +212,11 @@ bool App::updateVfdCommandSync() {
         && fabsf(vfd.getActualFrequencyHz() - desiredHz) <= 0.75f;
 
     if (!frequencyMatches) {
-        controller.vfdSetFrequency(desiredHz);
+        controller.vfdSetFrequency(desiredHz, "auto", vfdCommandSyncActive);
         return true;
     }
 
-    controller.vfdForward();
+    controller.vfdForward("auto", vfdCommandSyncActive);
     return true;
 }
 
@@ -477,7 +491,7 @@ void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
     const DisplayUi::Action action = display.handleButton(button, false, state);
 
     if (action.settingsChanged) {
-        saveUserSettings();
+        scheduleUserSettingsSave();
     }
 
     switch (action.type) {
@@ -494,13 +508,22 @@ void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
             controller.setAcFanMode(action.uintValue);
             break;
         case DisplayUi::ActionType::VfdStop:
-            requestVfdCommandSync("display stop");
+            if (!vfd.isBusy()) {
+                controller.vfdStop("display", vfdCommandSyncActive);
+            }
+            requestVfdCommandSync("display stop confirm");
             break;
         case DisplayUi::ActionType::VfdForward:
-            requestVfdCommandSync("display forward");
+            if (!vfd.isBusy()) {
+                controller.vfdForward("display", vfdCommandSyncActive);
+            }
+            requestVfdCommandSync("display forward confirm");
             break;
         case DisplayUi::ActionType::VfdSetFrequency:
-            requestVfdCommandSync("display frequency");
+            if (!vfd.isBusy()) {
+                controller.vfdSetFrequency(vfdStepToHz(state.settings.manualVfdStep), "display", vfdCommandSyncActive);
+            }
+            requestVfdCommandSync("display frequency confirm");
             break;
         case DisplayUi::ActionType::None:
             break;
@@ -660,6 +683,27 @@ void App::loadUserSettings() {
         state.settings.manualVfdPower ? 1 : 0,
         state.settings.manualVfdStep
     );
+}
+
+
+void App::scheduleUserSettingsSave() {
+    settingsDirty = true;
+    lastSettingsChangeMs = millis();
+    Logger::trace(TAG_SETTINGS, "User settings save scheduled");
+}
+
+
+void App::updateDeferredSettingsSave() {
+    if (!settingsDirty) {
+        return;
+    }
+
+    if (millis() - lastSettingsChangeMs < SETTINGS_SAVE_DELAY_MS) {
+        return;
+    }
+
+    settingsDirty = false;
+    saveUserSettings();
 }
 
 

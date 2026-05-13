@@ -549,14 +549,14 @@ void HomeAssistantBridge::handleCommand(const String& suffix, const String& payl
         }
     } else if (suffix == "vfd/run") {
         if (payload == "fwd" || payload == "forward") {
-            controller->vfdForward();
+            controller->vfdForward("ha");
         } else if (payload == "rev" || payload == "reverse") {
-            controller->vfdReverse();
+            controller->vfdReverse("ha");
         } else if (payload == "stop") {
-            controller->vfdStop();
+            controller->vfdStop("ha");
         }
     } else if (suffix == "vfd/hz") {
-        controller->vfdSetFrequency(payload.toFloat());
+        controller->vfdSetFrequency(payload.toFloat(), "ha");
     }
 }
 

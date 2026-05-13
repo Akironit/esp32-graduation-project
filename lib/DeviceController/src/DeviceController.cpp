@@ -84,9 +84,22 @@ bool DeviceController::setAcFanMode(uint8_t fanMode) {
     return true;
 }
 
-bool DeviceController::vfdForward() {
+bool DeviceController::vfdForward(const char* source, bool syncActive) {
     if (vfd == nullptr) {
         Logger::warning(TAG_ACTION, "VFD forward command rejected: VFD is not connected");
+        return false;
+    }
+
+    const bool busy = vfd->isBusy();
+    Logger::infof(
+        TAG_ACTION,
+        "VFD command source=%s action=forward busy=%u sync=%u token=%lu",
+        source,
+        busy ? 1 : 0,
+        syncActive ? 1 : 0,
+        (unsigned long)vfd->getLastToken()
+    );
+    if (busy) {
         return false;
     }
 
@@ -95,9 +108,22 @@ bool DeviceController::vfdForward() {
     return true;
 }
 
-bool DeviceController::vfdReverse() {
+bool DeviceController::vfdReverse(const char* source, bool syncActive) {
     if (vfd == nullptr) {
         Logger::warning(TAG_ACTION, "VFD reverse command rejected: VFD is not connected");
+        return false;
+    }
+
+    const bool busy = vfd->isBusy();
+    Logger::infof(
+        TAG_ACTION,
+        "VFD command source=%s action=reverse busy=%u sync=%u token=%lu",
+        source,
+        busy ? 1 : 0,
+        syncActive ? 1 : 0,
+        (unsigned long)vfd->getLastToken()
+    );
+    if (busy) {
         return false;
     }
 
@@ -106,9 +132,22 @@ bool DeviceController::vfdReverse() {
     return true;
 }
 
-bool DeviceController::vfdStop() {
+bool DeviceController::vfdStop(const char* source, bool syncActive) {
     if (vfd == nullptr) {
         Logger::warning(TAG_ACTION, "VFD stop command rejected: VFD is not connected");
+        return false;
+    }
+
+    const bool busy = vfd->isBusy();
+    Logger::infof(
+        TAG_ACTION,
+        "VFD command source=%s action=stop busy=%u sync=%u token=%lu",
+        source,
+        busy ? 1 : 0,
+        syncActive ? 1 : 0,
+        (unsigned long)vfd->getLastToken()
+    );
+    if (busy) {
         return false;
     }
 
@@ -117,9 +156,23 @@ bool DeviceController::vfdStop() {
     return true;
 }
 
-bool DeviceController::vfdSetFrequency(float hz) {
+bool DeviceController::vfdSetFrequency(float hz, const char* source, bool syncActive) {
     if (vfd == nullptr || hz < 20.0f || hz > 50.0f) {
         Logger::warningf(TAG_ACTION, "VFD frequency command rejected: value=%.2f", hz);
+        return false;
+    }
+
+    const bool busy = vfd->isBusy();
+    Logger::infof(
+        TAG_ACTION,
+        "VFD command source=%s action=set_frequency busy=%u sync=%u token=%lu hz=%.2f",
+        source,
+        busy ? 1 : 0,
+        syncActive ? 1 : 0,
+        (unsigned long)vfd->getLastToken(),
+        hz
+    );
+    if (busy) {
         return false;
     }
 

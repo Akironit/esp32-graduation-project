@@ -575,7 +575,7 @@ void SerialConsole::processVfdCommand(const String& cmd) {
     }
 
     if (cmd == "fwd") {
-        if (controller == nullptr || !controller->vfdForward()) {
+        if (controller == nullptr || !controller->vfdForward("console")) {
             println("Error: VFD controller action layer is not available");
             return;
         }
@@ -585,7 +585,7 @@ void SerialConsole::processVfdCommand(const String& cmd) {
     }
 
     if (cmd == "rev") {
-        if (controller == nullptr || !controller->vfdReverse()) {
+        if (controller == nullptr || !controller->vfdReverse("console")) {
             println("Error: VFD controller action layer is not available");
             return;
         }
@@ -595,7 +595,7 @@ void SerialConsole::processVfdCommand(const String& cmd) {
     }
 
     if (cmd == "stop") {
-        if (controller == nullptr || !controller->vfdStop()) {
+        if (controller == nullptr || !controller->vfdStop("console")) {
             println("Error: VFD controller action layer is not available");
             return;
         }
@@ -612,7 +612,7 @@ void SerialConsole::processVfdCommand(const String& cmd) {
             return;
         }
 
-        if (controller == nullptr || !controller->vfdSetFrequency(hz)) {
+        if (controller == nullptr || !controller->vfdSetFrequency(hz, "console")) {
             println("Error: VFD controller action layer is not available");
             return;
         }

@@ -68,6 +68,8 @@ private:
     void handleIoExpanderInputChange(uint8_t pin, int currentState);
     void handleButtonEvent(const char* name, ButtonInput::Event event);
     void loadUserSettings();
+    void scheduleUserSettingsSave();
+    void updateDeferredSettingsSave();
     void saveUserSettings();
     void updateVentilationInputs(int gpa5State, int gpa6State, int gpa7State, int exhaustState);
     void requestVfdCommandSync(const char* reason);
@@ -101,6 +103,8 @@ private:
     unsigned long lastVfdCommandSyncMs = 0;
     bool vfdCommandSyncActive = false;
     uint16_t vfdCommandSyncAttempts = 0;
+    bool settingsDirty = false;
+    unsigned long lastSettingsChangeMs = 0;
     bool lastLoggedVfdDesiredPower = false;
     uint8_t lastLoggedVfdDesiredStep = 255;
     bool lastLoggedVfdRunning = false;

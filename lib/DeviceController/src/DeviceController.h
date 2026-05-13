@@ -23,10 +23,10 @@ public:
     bool setAcMode(uint8_t mode);
     bool setAcFanMode(uint8_t fanMode);
 
-    bool vfdForward();
-    bool vfdReverse();
-    bool vfdStop();
-    bool vfdSetFrequency(float hz);
+    bool vfdForward(const char* source = "auto", bool syncActive = false);
+    bool vfdReverse(const char* source = "auto", bool syncActive = false);
+    bool vfdStop(const char* source = "auto", bool syncActive = false);
+    bool vfdSetFrequency(float hz, const char* source = "auto", bool syncActive = false);
     bool vfdReadRegister(uint16_t address, uint16_t count);
     bool vfdWriteRegister(uint16_t address, uint16_t value);
 
