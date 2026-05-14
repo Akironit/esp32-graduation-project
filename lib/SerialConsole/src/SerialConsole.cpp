@@ -1,6 +1,7 @@
 // SerialConsole.cpp
 #include "SerialConsole.h"
 
+#include "ClimateAlgorithm.h"
 #include "Logger.h"
 
 namespace {
@@ -50,7 +51,8 @@ void SerialConsole::begin(
     TemperatureSensors* temp,
     DisplayUi* display,
     DeviceState* state,
-    DeviceController* controller
+    DeviceController* controller,
+    ClimateAlgorithm* climateAlgorithm
 ) {
     this->hp = hp;
     this->vfd = vfd;
@@ -58,6 +60,7 @@ void SerialConsole::begin(
     this->display = display;
     this->state = state;
     this->controller = controller;
+    this->climateAlgorithm = climateAlgorithm;
 
     if (this->hp != nullptr) {
         this->hp->setDebugOutput(&Serial);
@@ -384,6 +387,11 @@ void SerialConsole::processCommand(const String& cmd) {
         return;
     }
 
+    if (cmd == "auto help") {
+        printAutoHelp();
+        return;
+    }
+
     if (cmd.startsWith("ac ")) {
         processAcCommand(cmd.substring(3));
         return;
@@ -399,12 +407,17 @@ void SerialConsole::processCommand(const String& cmd) {
         return;
     }
 
+    if (cmd.startsWith("auto ")) {
+        processAutoCommand(cmd.substring(5));
+        return;
+    }
+
     if (cmd.startsWith("display ")) {
         processDisplayCommand(cmd.substring(8));
         return;
     }
 
-    println("Unknown command. Use: ac <cmd>, vfd <cmd>, temp <cmd>, display <cmd>, state <cmd>");
+    println("Unknown command. Use: ac <cmd>, vfd <cmd>, temp <cmd>, auto <cmd>, display <cmd>, state <cmd>");
     println("Type 'help' for available commands");
 }
 
@@ -1250,6 +1263,7 @@ void SerialConsole::printHelp() {
     println("ac <command>   - Air conditioner control");
     println("vfd <command>  - Frequency drive control");
     println("temp <command> - Temperature sensors control");
+    println("auto <command> - Automatic climate algorithm");
     println("display <cmd>  - LCD display pages");
     println("state <cmd>    - Device state snapshot");
 #if ENABLE_STATE_DEBUG_COMMANDS
@@ -1265,6 +1279,8 @@ void SerialConsole::printHelp() {
     println("vfd stop");
     println("temp status");
     println("temp read");
+    println("auto status");
+    println("auto dry on");
     println("display next");
     println("state status");
 #if ENABLE_STATE_DEBUG_COMMANDS
@@ -1275,7 +1291,7 @@ void SerialConsole::printHelp() {
     println("log history");
     println("reboot");
     println();
-    println("Type 'ac help', 'vfd help', 'temp help', 'display help', 'state help', 'debug help' or 'log help'");
+    println("Type 'ac help', 'vfd help', 'temp help', 'auto help', 'display help', 'state help', 'debug help' or 'log help'");
     println("Other commands: reboot/restart");
     println("------------------------------");
     println();
@@ -1330,6 +1346,38 @@ void SerialConsole::printDisplayHelp() {
     println("display settings");
     println("display diagnostics");
     println("------------------------");
+    println();
+}
+
+
+void SerialConsole::printAutoHelp() {
+    println();
+    println("--- AUTO commands ---");
+    println("auto status");
+    println("auto dry on/off");
+    println("auto target <temp>");
+    println("auto hyst <value>");
+    println("auto outdoor-margin <value>");
+    println("auto outdoor-max <value>");
+    println("auto min-step <0-6>");
+    println("auto normal-step <0-6>");
+    println("auto cool-step <0-6>");
+    println("auto max-step <0-6>");
+    println("auto exhaust-boost <0-6>");
+    println("auto hood-boost <0-6>");
+    println("auto interval <ms>");
+    println("auto hold <ms>");
+    println("auto vent-timeout <ms>");
+    println("auto ac-cool on/off");
+    println("auto ac-heat on/off");
+    println("auto vent-cool on/off");
+    println("auto ac-fan-with-vent on/off");
+    println("auto ac-fan-in-auto on/off");
+    println("auto ac-fan-min <0-4>");
+    println("auto ac-fan-normal <0-4>");
+    println("auto ac-fan-boost <0-4>");
+    println("auto save/load/defaults");
+    println("---------------------");
     println();
 }
 
@@ -1643,4 +1691,182 @@ void SerialConsole::processTempCommand(const String& cmd) {
     }
 
     println("[TEMP] Unknown temp command. Use: temp help");
+}
+
+
+void SerialConsole::processAutoCommand(const String& cmd) {
+    String args = cmd;
+    args.trim();
+
+    if (climateAlgorithm == nullptr) {
+        println("[AUTO] ClimateAlgorithm module is not connected to console");
+        return;
+    }
+
+    AutoControlSettings settings = climateAlgorithm->getSettings();
+
+    auto parseOnOff = [](const String& value, bool& result) {
+        if (value == "on" || value == "1" || value == "true") {
+            result = true;
+            return true;
+        }
+        if (value == "off" || value == "0" || value == "false") {
+            result = false;
+            return true;
+        }
+        return false;
+    };
+
+    auto parseStep = [](const String& value, uint8_t& result) {
+        const int parsed = value.toInt();
+        if (parsed < 0 || parsed > 6) {
+            return false;
+        }
+        result = (uint8_t)parsed;
+        return true;
+    };
+
+    auto parseAcFan = [](const String& value, uint8_t& result) {
+        const int parsed = value.toInt();
+        if (parsed < 0 || parsed > 4) {
+            return false;
+        }
+        result = (uint8_t)parsed;
+        return true;
+    };
+
+    if (args.length() == 0 || args == "status") {
+        const AutoControlStatus status = climateAlgorithm->getStatus();
+        println();
+        println("[AUTO] Status");
+        print("mode=");
+        println(state != nullptr ? deviceModeName(state->controllerState.mode) : "?");
+        print("activity=");
+        println(climateAlgorithm->activityName(status.activity));
+        print("dryRun=");
+        println(settings.dryRun ? 1 : 0);
+        print("indoor=");
+        if (status.indoorTempC == DEVICE_DISCONNECTED_C) println("N/A"); else println(status.indoorTempC, 1);
+        print("outdoor=");
+        if (status.outdoorTempC == DEVICE_DISCONNECTED_C) println("N/A"); else println(status.outdoorTempC, 1);
+        print("target=");
+        println(settings.targetTempC, 1);
+        print("delta=");
+        println(status.deltaC, 1);
+        print("vfdDesiredStep=");
+        println((int)status.vfdDesiredStep);
+        print("desiredVfdPower=");
+        println(status.vfdDesiredPower ? 1 : 0);
+        print("actualVfdRunning=");
+        println(state != nullptr && state->vfd.running ? 1 : 0);
+        print("actualVfdHz=");
+        if (state != nullptr && state->vfd.hasActualFrequency) println(state->vfd.actualFrequencyHz, 1); else println("N/A");
+        print("acDesiredPower=");
+        println(status.acDesiredPower ? 1 : 0);
+        print("desiredAcMode=");
+        println((int)status.acDesiredMode);
+        print("desiredAcFan=");
+        println((int)status.acDesiredFan);
+        print("keepAcFanOnWithVent=");
+        println(settings.keepAcFanOnWithVent ? 1 : 0);
+        print("keepAcFanOnInAuto=");
+        println(settings.keepAcFanOnInAuto ? 1 : 0);
+        print("reason=");
+        println(status.reason);
+        print("lastDecisionAge=");
+        println(String(status.lastDecisionMs == 0 ? 0 : millis() - status.lastDecisionMs) + " ms");
+        print("stateHoldAge=");
+        println(String(status.stateEnteredMs == 0 ? 0 : millis() - status.stateEnteredMs) + " ms");
+        return;
+    }
+
+    if (args == "save") {
+        println(climateAlgorithm->saveSettings() ? "[AUTO] Settings saved" : "[AUTO] Save failed");
+        return;
+    }
+
+    if (args == "load") {
+        println(climateAlgorithm->loadSettings() ? "[AUTO] Settings loaded" : "[AUTO] Load failed");
+        return;
+    }
+
+    if (args == "defaults") {
+        climateAlgorithm->resetToDefaults();
+        println("[AUTO] Defaults restored. Use 'auto save' to persist.");
+        return;
+    }
+
+    if (args == "help") {
+        printAutoHelp();
+        return;
+    }
+
+    int separator = args.indexOf(' ');
+    if (separator < 0) {
+        println("[AUTO] Unknown auto command. Use: auto help");
+        return;
+    }
+
+    String key = args.substring(0, separator);
+    String value = args.substring(separator + 1);
+    key.trim();
+    value.trim();
+
+    bool changed = true;
+    if (key == "dry") {
+        changed = parseOnOff(value, settings.dryRun);
+    } else if (key == "target") {
+        settings.targetTempC = value.toFloat();
+    } else if (key == "hyst") {
+        settings.hysteresisC = value.toFloat();
+    } else if (key == "outdoor-margin") {
+        settings.outdoorCoolingMarginC = value.toFloat();
+    } else if (key == "outdoor-max") {
+        settings.outdoorCoolingMaxC = value.toFloat();
+    } else if (key == "min-step") {
+        changed = parseStep(value, settings.minVentStep);
+    } else if (key == "normal-step") {
+        changed = parseStep(value, settings.normalVentStep);
+    } else if (key == "cool-step") {
+        changed = parseStep(value, settings.coolingVentStep);
+    } else if (key == "max-step") {
+        changed = parseStep(value, settings.maxVentStep);
+    } else if (key == "exhaust-boost") {
+        changed = parseStep(value, settings.exhaustBoostStep);
+    } else if (key == "hood-boost") {
+        changed = parseStep(value, settings.kitchenHoodBoostStep);
+    } else if (key == "interval") {
+        settings.decisionIntervalMs = value.toInt();
+    } else if (key == "hold") {
+        settings.minStateHoldMs = value.toInt();
+    } else if (key == "vent-timeout") {
+        settings.ventCoolTimeoutMs = value.toInt();
+    } else if (key == "ac-cool") {
+        changed = parseOnOff(value, settings.allowAcCooling);
+    } else if (key == "ac-heat") {
+        changed = parseOnOff(value, settings.allowAcHeating);
+    } else if (key == "vent-cool") {
+        changed = parseOnOff(value, settings.allowVentCooling);
+    } else if (key == "ac-fan-with-vent") {
+        changed = parseOnOff(value, settings.keepAcFanOnWithVent);
+    } else if (key == "ac-fan-in-auto") {
+        changed = parseOnOff(value, settings.keepAcFanOnInAuto);
+    } else if (key == "ac-fan-min") {
+        changed = parseAcFan(value, settings.acFanMinSpeed);
+    } else if (key == "ac-fan-normal") {
+        changed = parseAcFan(value, settings.acFanNormalSpeed);
+    } else if (key == "ac-fan-boost") {
+        changed = parseAcFan(value, settings.acFanBoostSpeed);
+    } else {
+        println("[AUTO] Unknown auto setting. Use: auto help");
+        return;
+    }
+
+    if (!changed) {
+        println("[AUTO] Invalid value");
+        return;
+    }
+
+    climateAlgorithm->setSettings(settings);
+    println("[AUTO] Setting updated. Use 'auto save' to persist.");
 }

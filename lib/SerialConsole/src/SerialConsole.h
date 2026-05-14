@@ -17,6 +17,8 @@
 #define ENABLE_STATE_DEBUG_COMMANDS 1
 #endif
 
+class ClimateAlgorithm;
+
 class SerialConsole {
 public:
     void begin(
@@ -25,7 +27,8 @@ public:
         TemperatureSensors* temp,
         DisplayUi* display = nullptr,
         DeviceState* state = nullptr,
-        DeviceController* controller = nullptr
+        DeviceController* controller = nullptr,
+        ClimateAlgorithm* climateAlgorithm = nullptr
     );
     void update();
     void startTelnet();
@@ -48,6 +51,7 @@ private:
     DisplayUi* display = nullptr;
     DeviceState* state = nullptr;
     DeviceController* controller = nullptr;
+    ClimateAlgorithm* climateAlgorithm = nullptr;
 
     WiFiServer telnetServer{23};
     WiFiClient telnetClient;
@@ -76,6 +80,7 @@ private:
     void processAcCommand(const String& cmd);
     void processVfdCommand(const String& cmd);
     void processTempCommand(const String& cmd);
+    void processAutoCommand(const String& cmd);
     void processDisplayCommand(const String& cmd);
     void processLogCommand(const String& cmd);
     void processStateCommand(const String& cmd);
@@ -87,6 +92,7 @@ private:
     void printAcHelp();
     void printVfdHelp();
     void printDisplayHelp();
+    void printAutoHelp();
     void printLogHelp();
     void printStateHelp();
 #if ENABLE_STATE_DEBUG_COMMANDS

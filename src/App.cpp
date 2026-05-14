@@ -33,7 +33,8 @@ void App::begin() {
     loadUserSettings();
 
     controller.begin(&hp, &vfd, &display, &tempSensors);
-    console.begin(&hp, &vfd, &tempSensors, &display, &state, &controller);
+    climateAlgorithm.begin(&state, &controller);
+    console.begin(&hp, &vfd, &tempSensors, &display, &state, &controller, &climateAlgorithm);
     display.begin();
 
     network.begin();
@@ -100,6 +101,8 @@ void App::update() {
     updateHeatPump();
     updateIoExpanderInputs();
 
+    updateDeviceState();
+    climateAlgorithm.update();
     updateDeviceState();
     display.update(state);
     updateDeferredSettingsSave();

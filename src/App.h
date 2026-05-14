@@ -15,6 +15,7 @@
 #include "DeviceState.h"
 #include "DeviceController.h"
 #include "HomeAssistantBridge.h"
+#include "ClimateAlgorithm.h"
 
 // -=-=-=-=-= Pin definitions and settings -=-=-=-=-=-
 // AC LIN bus (Serial1)
@@ -86,6 +87,7 @@ private:
     DeviceState state;
     DeviceController controller;
     HomeAssistantBridge homeAssistant;
+    ClimateAlgorithm climateAlgorithm;
     Preferences preferences;
     bool ioExpanderReady = false;
     int lastGpa5State = HIGH;

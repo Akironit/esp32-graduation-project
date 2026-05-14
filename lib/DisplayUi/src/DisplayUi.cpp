@@ -466,7 +466,7 @@ void DisplayUi::drawOverview(const DeviceState& state) {
     uint8_t shownAcMode = state.ac.mode;
     uint8_t shownAcTemp = state.ac.temperature;
     uint8_t shownAcFan = state.ac.fanMode;
-    bool shownVfdPower = state.settings.manualVfdPower;
+    bool shownVfdPower = state.vfd.running || (state.vfd.hasActualFrequency && state.vfd.actualFrequencyHz > 1.0f);
     uint8_t shownVfdStep = vfdStep(state.vfd);
 
     if (interactionMode == InteractionMode::Edit) {
