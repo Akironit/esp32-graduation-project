@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include "AppConfig.h"
 #include "NetworkManager.h"
 #include "Secrets.h"
 #include "FujiHeatPump.h"
@@ -72,6 +73,8 @@ private:
     void scheduleUserSettingsSave();
     void updateDeferredSettingsSave();
     void saveUserSettings();
+    void updateModeTransition();
+    void applyManualSettingsProfile(const char* reason);
     void updateVentilationInputs(int gpa5State, int gpa6State, int gpa7State, int exhaustState);
     void requestVfdCommandSync(const char* reason);
     bool isVfdDesiredStateReached() const;
@@ -107,6 +110,8 @@ private:
     uint16_t vfdCommandSyncAttempts = 0;
     bool settingsDirty = false;
     unsigned long lastSettingsChangeMs = 0;
+    bool modeTransitionInitialized = false;
+    DeviceMode lastControllerMode = DeviceMode::Auto;
     bool lastLoggedVfdDesiredPower = false;
     uint8_t lastLoggedVfdDesiredStep = 255;
     bool lastLoggedVfdRunning = false;

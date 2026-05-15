@@ -1383,7 +1383,7 @@ const char* DisplayUi::activityName(ControllerActivity activity) const {
         case ControllerActivity::Hold:
             return "Hold";
         case ControllerActivity::Idle:
-            return "Idle";
+            return "Monitor";
     }
 
     return "?";
@@ -1421,7 +1421,7 @@ uint16_t DisplayUi::activityColor(ControllerActivity activity) const {
         case ControllerActivity::Hold:
             return COLOR_WARN;
         case ControllerActivity::Idle:
-            return COLOR_WARN;
+            return COLOR_MUTED;
     }
 
     return COLOR_TEXT;

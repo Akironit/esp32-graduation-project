@@ -18,6 +18,7 @@
 #endif
 
 class ClimateAlgorithm;
+struct AutoControlSettings;
 
 class SerialConsole {
 public:
@@ -103,6 +104,7 @@ private:
     void printTemperatureStateStatus();
     void printDisplayStateStatus();
     void printAcStatus();
+    void printAutoConfig(const AutoControlSettings& settings);
 
     uint16_t parseHexU16(const String& value, bool& ok);
     bool parseLogLevel(const String& value, LogLevel& level);

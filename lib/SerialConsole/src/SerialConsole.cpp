@@ -1354,7 +1354,9 @@ void SerialConsole::printAutoHelp() {
     println();
     println("--- AUTO commands ---");
     println("auto status");
+    println("auto config");
     println("auto dry on/off");
+    println("auto log on/off");
     println("auto target <temp>");
     println("auto hyst <value>");
     println("auto outdoor-margin <value>");
@@ -1376,7 +1378,9 @@ void SerialConsole::printAutoHelp() {
     println("auto ac-fan-min <0-4>");
     println("auto ac-fan-normal <0-4>");
     println("auto ac-fan-boost <0-4>");
-    println("auto save/load/defaults");
+    println("auto save                         - force save now");
+    println("auto load                         - reload from NVS");
+    println("auto defaults                     - reset defaults and autosave");
     println("---------------------");
     println();
 }
@@ -1572,7 +1576,7 @@ const char* SerialConsole::controllerActivityName(ControllerActivity activity) c
         case ControllerActivity::Hold:
             return "hold";
         case ControllerActivity::Idle:
-            return "idle";
+            return "monitor";
     }
 
     return "?";
@@ -1745,6 +1749,8 @@ void SerialConsole::processAutoCommand(const String& cmd) {
         println(climateAlgorithm->activityName(status.activity));
         print("dryRun=");
         println(settings.dryRun ? 1 : 0);
+        print("autoLogEnabled=");
+        println(settings.autoLogEnabled ? 1 : 0);
         print("indoor=");
         if (status.indoorTempC == DEVICE_DISCONNECTED_C) println("N/A"); else println(status.indoorTempC, 1);
         print("outdoor=");
@@ -1757,8 +1763,12 @@ void SerialConsole::processAutoCommand(const String& cmd) {
         println((int)status.vfdDesiredStep);
         print("desiredVfdPower=");
         println(status.vfdDesiredPower ? 1 : 0);
+        print("desiredVfdHz=");
+        println(status.vfdDesiredHz, 1);
         print("actualVfdRunning=");
         println(state != nullptr && state->vfd.running ? 1 : 0);
+        print("actualVfdStep=");
+        println(state != nullptr ? (int)state->vfd.actualStep : 0);
         print("actualVfdHz=");
         if (state != nullptr && state->vfd.hasActualFrequency) println(state->vfd.actualFrequencyHz, 1); else println("N/A");
         print("acDesiredPower=");
@@ -1767,32 +1777,56 @@ void SerialConsole::processAutoCommand(const String& cmd) {
         println((int)status.acDesiredMode);
         print("desiredAcFan=");
         println((int)status.acDesiredFan);
+        print("desiredAcTemp=");
+        println((int)status.acDesiredTemp);
+        print("actualAcPower=");
+        println(state != nullptr && state->ac.powerOn ? 1 : 0);
+        print("actualAcMode=");
+        println(state != nullptr ? (int)state->ac.mode : 0);
+        print("actualAcFan=");
+        println(state != nullptr ? (int)state->ac.fanMode : 0);
+        print("actualAcTemp=");
+        println(state != nullptr ? (int)state->ac.temperature : 0);
+        print("actualAcBound=");
+        println(state != nullptr && state->ac.bound ? 1 : 0);
         print("keepAcFanOnWithVent=");
         println(settings.keepAcFanOnWithVent ? 1 : 0);
         print("keepAcFanOnInAuto=");
         println(settings.keepAcFanOnInAuto ? 1 : 0);
         print("reason=");
         println(status.reason);
+        print("lastApplyResult=");
+        println(status.lastApplyResult);
+        print("lastSkippedReason=");
+        println(status.lastSkippedReason);
+        print("lastCommandAge=");
+        println(String(status.lastCommandMs == 0 ? 0 : millis() - status.lastCommandMs) + " ms");
         print("lastDecisionAge=");
         println(String(status.lastDecisionMs == 0 ? 0 : millis() - status.lastDecisionMs) + " ms");
         print("stateHoldAge=");
         println(String(status.stateEnteredMs == 0 ? 0 : millis() - status.stateEnteredMs) + " ms");
+        printAutoConfig(settings);
+        return;
+    }
+
+    if (args == "config" || args == "settings") {
+        printAutoConfig(settings);
         return;
     }
 
     if (args == "save") {
-        println(climateAlgorithm->saveSettings() ? "[AUTO] Settings saved" : "[AUTO] Save failed");
+        println(climateAlgorithm->saveSettings() ? "[AUTO] Settings force-saved" : "[AUTO] Save failed");
         return;
     }
 
     if (args == "load") {
-        println(climateAlgorithm->loadSettings() ? "[AUTO] Settings loaded" : "[AUTO] Load failed");
+        println(climateAlgorithm->loadSettings() ? "[AUTO] Settings reloaded from NVS" : "[AUTO] Load failed");
         return;
     }
 
     if (args == "defaults") {
         climateAlgorithm->resetToDefaults();
-        println("[AUTO] Defaults restored. Use 'auto save' to persist.");
+        println("[AUTO] Defaults restored. Autosave scheduled.");
         return;
     }
 
@@ -1815,6 +1849,8 @@ void SerialConsole::processAutoCommand(const String& cmd) {
     bool changed = true;
     if (key == "dry") {
         changed = parseOnOff(value, settings.dryRun);
+    } else if (key == "log") {
+        changed = parseOnOff(value, settings.autoLogEnabled);
     } else if (key == "target") {
         settings.targetTempC = value.toFloat();
     } else if (key == "hyst") {
@@ -1868,5 +1904,69 @@ void SerialConsole::processAutoCommand(const String& cmd) {
     }
 
     climateAlgorithm->setSettings(settings);
-    println("[AUTO] Setting updated. Use 'auto save' to persist.");
+    println("[AUTO] Setting updated. Autosave scheduled.");
+}
+
+
+void SerialConsole::printAutoConfig(const AutoControlSettings& settings) {
+    println();
+    println("[AUTO] Config");
+    print("target=");
+    println(settings.targetTempC, 1);
+    print("hysteresis=");
+    println(settings.hysteresisC, 2);
+    print("coolingStartDelta=");
+    println(settings.coolingStartDeltaC, 2);
+    print("heatingStartDelta=");
+    println(settings.heatingStartDeltaC, 2);
+    print("outdoorCoolingMargin=");
+    println(settings.outdoorCoolingMarginC, 2);
+    print("outdoorCoolingMax=");
+    println(settings.outdoorCoolingMaxC, 1);
+    print("ventCoolMinDrop=");
+    println(settings.ventCoolMinDropC, 2);
+    print("minVentStep=");
+    println((int)settings.minVentStep);
+    print("normalVentStep=");
+    println((int)settings.normalVentStep);
+    print("coolingVentStep=");
+    println((int)settings.coolingVentStep);
+    print("maxVentStep=");
+    println((int)settings.maxVentStep);
+    print("exhaustBoostStep=");
+    println((int)settings.exhaustBoostStep);
+    print("kitchenHoodBoostStep=");
+    println((int)settings.kitchenHoodBoostStep);
+    print("allowAcCooling=");
+    println(settings.allowAcCooling ? 1 : 0);
+    print("allowAcHeating=");
+    println(settings.allowAcHeating ? 1 : 0);
+    print("allowVentCooling=");
+    println(settings.allowVentCooling ? 1 : 0);
+    print("keepAcFanOnWithVent=");
+    println(settings.keepAcFanOnWithVent ? 1 : 0);
+    print("keepAcFanOnInAuto=");
+    println(settings.keepAcFanOnInAuto ? 1 : 0);
+    print("acFanOnlyMode=");
+    println((int)settings.acFanOnlyMode);
+    print("acFanMinSpeed=");
+    println((int)settings.acFanMinSpeed);
+    print("acFanNormalSpeed=");
+    println((int)settings.acFanNormalSpeed);
+    print("acFanBoostSpeed=");
+    println((int)settings.acFanBoostSpeed);
+    print("acCoolFanMode=");
+    println((int)settings.acCoolFanMode);
+    print("acHeatFanMode=");
+    println((int)settings.acHeatFanMode);
+    print("decisionIntervalMs=");
+    println(String(settings.decisionIntervalMs));
+    print("minStateHoldMs=");
+    println(String(settings.minStateHoldMs));
+    print("ventCoolTimeoutMs=");
+    println(String(settings.ventCoolTimeoutMs));
+    print("dryRun=");
+    println(settings.dryRun ? 1 : 0);
+    print("autoLogEnabled=");
+    println(settings.autoLogEnabled ? 1 : 0);
 }

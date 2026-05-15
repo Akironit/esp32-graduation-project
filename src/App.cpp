@@ -7,13 +7,6 @@ namespace {
 constexpr const char* TAG_INPUT = "INPUT";
 constexpr const char* TAG_SETTINGS = "SETTINGS";
 constexpr const char* TAG_VFD_UI = "VFD_UI";
-constexpr unsigned long BUTTON_POLL_INTERVAL_MS = 10;
-constexpr unsigned long VFD_STATUS_POLL_INTERVAL_MS = 1000;
-constexpr unsigned long VFD_COMMAND_SYNC_INTERVAL_MS = 500;
-constexpr unsigned long VFD_POLL_AFTER_COMMAND_GUARD_MS = 250;
-constexpr uint8_t VFD_COMMAND_SYNC_MAX_ATTEMPTS = 10;
-constexpr unsigned long SETTINGS_SAVE_DELAY_MS = 2000;
-constexpr const char* SETTINGS_NAMESPACE = "climate";
 
 volatile bool mcpInterruptA = false;
 volatile bool mcpInterruptB = false;
@@ -102,6 +95,7 @@ void App::update() {
     updateIoExpanderInputs();
 
     updateDeviceState();
+    updateModeTransition();
     climateAlgorithm.update();
     updateDeviceState();
     display.update(state);
@@ -129,11 +123,11 @@ void App::updateVfdStatus() {
     }
 
     const unsigned long now = millis();
-    if (now - lastVfdStatusPollMs < VFD_STATUS_POLL_INTERVAL_MS) {
+    if (now - lastVfdStatusPollMs < AppConfig::VFD_STATUS_POLL_INTERVAL_MS) {
         return;
     }
 
-    if (now - lastVfdCommandSyncMs < VFD_POLL_AFTER_COMMAND_GUARD_MS) {
+    if (now - lastVfdCommandSyncMs < AppConfig::VFD_POLL_AFTER_COMMAND_GUARD_MS) {
         return;
     }
 
@@ -162,11 +156,11 @@ bool App::updateVfdCommandSync() {
     }
 
     const unsigned long now = millis();
-    if (now - lastVfdCommandSyncMs < VFD_COMMAND_SYNC_INTERVAL_MS) {
+    if (now - lastVfdCommandSyncMs < AppConfig::VFD_COMMAND_SYNC_INTERVAL_MS) {
         return false;
     }
 
-    if (vfdCommandSyncAttempts >= VFD_COMMAND_SYNC_MAX_ATTEMPTS) {
+    if (vfdCommandSyncAttempts >= AppConfig::VFD_COMMAND_SYNC_MAX_ATTEMPTS) {
         Logger::warningf(
             TAG_VFD_UI,
             "VFD sync stopped after %u attempts desiredPower=%u desiredStep=%u actualRunning=%u actualStep=%u actualHz=%.1f",
@@ -365,7 +359,7 @@ void App::updateIoExpanderInputs() {
     }
 
     const unsigned long now = millis();
-    const bool pollButtons = buttonsActive && now - lastButtonPollMs >= BUTTON_POLL_INTERVAL_MS;
+    const bool pollButtons = buttonsActive && now - lastButtonPollMs >= AppConfig::BUTTON_POLL_INTERVAL_MS;
 
     if (!mcpInterruptA && !mcpInterruptB && !pollButtons) {
         return;
@@ -483,10 +477,14 @@ void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
     }
 
     Logger::debugf(TAG_INPUT, "Button %s short press", name);
+    const float previousTargetTemp = state.environment.targetIndoorTempC;
     const DisplayUi::Action action = display.handleButton(button, false, state);
 
     if (action.settingsChanged) {
         scheduleUserSettingsSave();
+        if (fabsf(previousTargetTemp - state.environment.targetIndoorTempC) > 0.01f) {
+            climateAlgorithm.setTargetTemp(state.environment.targetIndoorTempC);
+        }
     }
 
     switch (action.type) {
@@ -635,7 +633,7 @@ void App::updateVentilationInputs(int gpa5State, int gpa6State, int gpa7State, i
 
 
 void App::loadUserSettings() {
-    if (!preferences.begin(SETTINGS_NAMESPACE, true)) {
+    if (!preferences.begin(AppConfig::USER_SETTINGS_NAMESPACE, true)) {
         Logger::warning(TAG_SETTINGS, "Failed to open NVS for reading");
         return;
     }
@@ -703,7 +701,7 @@ void App::updateDeferredSettingsSave() {
         return;
     }
 
-    if (millis() - lastSettingsChangeMs < SETTINGS_SAVE_DELAY_MS) {
+    if (millis() - lastSettingsChangeMs < AppConfig::USER_SETTINGS_SAVE_DELAY_MS) {
         return;
     }
 
@@ -713,7 +711,7 @@ void App::updateDeferredSettingsSave() {
 
 
 void App::saveUserSettings() {
-    if (!preferences.begin(SETTINGS_NAMESPACE, false)) {
+    if (!preferences.begin(AppConfig::USER_SETTINGS_NAMESPACE, false)) {
         Logger::warning(TAG_SETTINGS, "Failed to open NVS for writing");
         return;
     }
@@ -734,4 +732,69 @@ void App::saveUserSettings() {
     preferences.end();
 
     Logger::info(TAG_SETTINGS, "User settings saved to NVS");
+}
+
+
+void App::updateModeTransition() {
+    const DeviceMode currentMode = state.controllerState.mode;
+
+    if (!modeTransitionInitialized) {
+        modeTransitionInitialized = true;
+        lastControllerMode = currentMode;
+
+        if (currentMode == DeviceMode::Manual) {
+            applyManualSettingsProfile("startup manual mode");
+        }
+        return;
+    }
+
+    if (currentMode == lastControllerMode) {
+        return;
+    }
+
+    Logger::infof(
+        TAG_SETTINGS,
+        "Device mode changed: %u -> %u",
+        static_cast<unsigned int>(lastControllerMode),
+        static_cast<unsigned int>(currentMode)
+    );
+
+    lastControllerMode = currentMode;
+
+    if (currentMode == DeviceMode::Auto || currentMode == DeviceMode::Manual || currentMode == DeviceMode::Disabled) {
+        state.settings.mode = currentMode;
+        scheduleUserSettingsSave();
+    }
+
+    if (currentMode == DeviceMode::Manual) {
+        applyManualSettingsProfile("entered manual mode");
+    } else if (currentMode == DeviceMode::Disabled) {
+        state.controllerState.activity = ControllerActivity::Idle;
+    }
+}
+
+
+void App::applyManualSettingsProfile(const char* reason) {
+    Logger::infof(
+        TAG_SETTINGS,
+        "Applying manual profile: %s acPower=%u acMode=%u acTemp=%u acFan=%u vfdPower=%u vfdStep=%u",
+        reason,
+        state.settings.manualAcPower ? 1 : 0,
+        state.settings.manualAcMode,
+        state.settings.manualAcTemperature,
+        state.settings.manualAcFanMode,
+        state.settings.manualVfdPower ? 1 : 0,
+        state.settings.manualVfdStep
+    );
+
+    if (state.settings.manualAcPower) {
+        controller.setAcPower(true);
+        controller.setAcMode(state.settings.manualAcMode);
+        controller.setAcTemperature(state.settings.manualAcTemperature);
+        controller.setAcFanMode(state.settings.manualAcFanMode);
+    } else {
+        controller.setAcPower(false);
+    }
+
+    requestVfdCommandSync(reason);
 }
