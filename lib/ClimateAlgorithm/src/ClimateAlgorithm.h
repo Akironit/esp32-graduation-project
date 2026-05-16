@@ -11,7 +11,6 @@ struct AutoControlSettings {
     bool autoEnabled = true;
     bool dryRun = true;
     float targetTempC = 22.5f;
-    float hysteresisC = 0.5f;
     float coolingStartDeltaC = 0.7f;
     float heatingStartDeltaC = 0.7f;
 
@@ -42,10 +41,19 @@ struct AutoControlSettings {
     uint8_t acFanBoostSpeed = 3;
     uint8_t acFanMaxSpeed = 4;
     bool acFanAutoAllowed = true;
-    uint8_t acCoolFanSpeed = 2;
-    uint8_t acHeatFanSpeed = 2;
-    uint8_t acCoolTempOffsetC = 0;
-    uint8_t acHeatTempOffsetC = 0;
+    bool acDynamicControlEnabled = true;
+    float acCoolingFullPowerDeltaC = 3.0f;
+    float acCoolingMinTempOffsetC = 1.0f;
+    float acCoolingMaxTempOffsetC = 5.0f;
+    float acCoolingMinSetpointC = 18.0f;
+    uint8_t acCoolingMinFanSpeed = 2;
+    uint8_t acCoolingMaxFanSpeed = 4;
+    float acHeatingFullPowerDeltaC = 3.0f;
+    float acHeatingMinTempOffsetC = 1.0f;
+    float acHeatingMaxTempOffsetC = 4.0f;
+    float acHeatingMaxSetpointC = 30.0f;
+    uint8_t acHeatingMinFanSpeed = 2;
+    uint8_t acHeatingMaxFanSpeed = 4;
 
     unsigned long decisionIntervalMs = 5000;
     unsigned long minStateHoldMs = 60000;
@@ -100,6 +108,8 @@ struct AutoControlStatus {
     uint8_t desiredAcMode = 0;
     uint8_t desiredAcTargetTemp = 0;
     uint8_t desiredAcFanSpeed = 0;
+    float acCoolingRatio = 0.0f;
+    float acHeatingRatio = 0.0f;
 
     char reason[192] = "Not evaluated";
     char lastApplyResult[96] = "No command applied yet";
@@ -174,9 +184,11 @@ private:
     bool canUseAcCooling() const;
     bool canUseAcHeating() const;
     uint8_t hoodCompensationStep(uint8_t hoodLevel) const;
+    void calculateDynamicCoolingAc(uint8_t& targetTemp, uint8_t& fanSpeed);
+    void calculateDynamicHeatingAc(uint8_t& targetTemp, uint8_t& fanSpeed);
     uint8_t calculateAcFanSpeedForVfdStep(uint8_t vfdStep) const;
     float vfdStepToHz(uint8_t step) const;
-    uint8_t acTargetTemperature(int8_t offset) const;
+    uint8_t clampAcSetpoint(float value) const;
     void enterAutoSafeMode(const char* reason);
     void updateSafeRecovery();
     void resetVentCoolingCheck();

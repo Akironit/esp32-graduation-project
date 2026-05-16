@@ -61,7 +61,8 @@ void ClimateAlgorithm::update() {
     }
 
     if (state->controllerState.mode == DeviceMode::Manual) {
-        status.activity = state->controllerState.activity;
+        state->controllerState.activity = ControllerActivity::Hold;
+        status.activity = ControllerActivity::Hold;
         status.lastDecisionMs = millis();
         setReason("Manual mode active");
         resetVentCoolingCheck();
@@ -112,7 +113,6 @@ void ClimateAlgorithm::setSettings(const AutoControlSettings& newSettings, bool 
     const float oldTarget = settings.targetTempC;
     settings = newSettings;
     settings.targetTempC = clampFloat(settings.targetTempC, 16.0f, 30.0f);
-    settings.hysteresisC = clampFloat(settings.hysteresisC, 0.1f, 3.0f);
     settings.coolingStartDeltaC = clampFloat(settings.coolingStartDeltaC, 0.1f, 5.0f);
     settings.heatingStartDeltaC = clampFloat(settings.heatingStartDeltaC, 0.1f, 5.0f);
     settings.outdoorCoolingMinDeltaC = clampFloat(settings.outdoorCoolingMinDeltaC, 1.0f, 20.0f);
@@ -131,8 +131,24 @@ void ClimateAlgorithm::setSettings(const AutoControlSettings& newSettings, bool 
     settings.acFanNormalSpeed = clampAcFan(settings.acFanNormalSpeed, settings.acFanAutoAllowed);
     settings.acFanBoostSpeed = clampAcFan(settings.acFanBoostSpeed, settings.acFanAutoAllowed);
     settings.acFanMaxSpeed = clampAcFan(settings.acFanMaxSpeed, settings.acFanAutoAllowed);
-    settings.acCoolFanSpeed = clampAcFan(settings.acCoolFanSpeed, settings.acFanAutoAllowed);
-    settings.acHeatFanSpeed = clampAcFan(settings.acHeatFanSpeed, settings.acFanAutoAllowed);
+    settings.acCoolingFullPowerDeltaC = clampFloat(settings.acCoolingFullPowerDeltaC, 0.1f, 10.0f);
+    settings.acCoolingMinTempOffsetC = clampFloat(settings.acCoolingMinTempOffsetC, 0.0f, 10.0f);
+    settings.acCoolingMaxTempOffsetC = clampFloat(settings.acCoolingMaxTempOffsetC, settings.acCoolingMinTempOffsetC, 10.0f);
+    settings.acCoolingMinSetpointC = clampFloat(settings.acCoolingMinSetpointC, 16.0f, 30.0f);
+    settings.acCoolingMinFanSpeed = clampAcFan(settings.acCoolingMinFanSpeed, settings.acFanAutoAllowed);
+    settings.acCoolingMaxFanSpeed = clampAcFan(settings.acCoolingMaxFanSpeed, settings.acFanAutoAllowed);
+    if (settings.acCoolingMaxFanSpeed < settings.acCoolingMinFanSpeed) {
+        settings.acCoolingMaxFanSpeed = settings.acCoolingMinFanSpeed;
+    }
+    settings.acHeatingFullPowerDeltaC = clampFloat(settings.acHeatingFullPowerDeltaC, 0.1f, 10.0f);
+    settings.acHeatingMinTempOffsetC = clampFloat(settings.acHeatingMinTempOffsetC, 0.0f, 10.0f);
+    settings.acHeatingMaxTempOffsetC = clampFloat(settings.acHeatingMaxTempOffsetC, settings.acHeatingMinTempOffsetC, 10.0f);
+    settings.acHeatingMaxSetpointC = clampFloat(settings.acHeatingMaxSetpointC, 16.0f, 30.0f);
+    settings.acHeatingMinFanSpeed = clampAcFan(settings.acHeatingMinFanSpeed, settings.acFanAutoAllowed);
+    settings.acHeatingMaxFanSpeed = clampAcFan(settings.acHeatingMaxFanSpeed, settings.acFanAutoAllowed);
+    if (settings.acHeatingMaxFanSpeed < settings.acHeatingMinFanSpeed) {
+        settings.acHeatingMaxFanSpeed = settings.acHeatingMinFanSpeed;
+    }
     if (settings.acFanOnlyMode < 1 || settings.acFanOnlyMode > 5) {
         settings.acFanOnlyMode = 1;
     }
@@ -189,7 +205,6 @@ bool ClimateAlgorithm::loadSettings() {
     loaded.autoEnabled = preferences.getBool("autoEnabled", loaded.autoEnabled);
     loaded.dryRun = preferences.getBool("dryRun", loaded.dryRun);
     loaded.targetTempC = preferences.getFloat("targetTempC", preferences.getFloat("target", loaded.targetTempC));
-    loaded.hysteresisC = preferences.getFloat("hysteresisC", preferences.getFloat("hyst", loaded.hysteresisC));
     loaded.coolingStartDeltaC = preferences.getFloat("coolStart", preferences.getFloat("coolDelta", loaded.coolingStartDeltaC));
     loaded.heatingStartDeltaC = preferences.getFloat("heatStart", preferences.getFloat("heatDelta", loaded.heatingStartDeltaC));
     loaded.allowVentCooling = preferences.getBool("allowVentCool", preferences.getBool("ventCool", loaded.allowVentCooling));
@@ -217,10 +232,19 @@ bool ClimateAlgorithm::loadSettings() {
     loaded.acFanBoostSpeed = preferences.getUChar("fanBoost", loaded.acFanBoostSpeed);
     loaded.acFanMaxSpeed = preferences.getUChar("fanMax", loaded.acFanMaxSpeed);
     loaded.acFanAutoAllowed = preferences.getBool("fanAuto", loaded.acFanAutoAllowed);
-    loaded.acCoolFanSpeed = preferences.getUChar("coolFanSpeed", preferences.getUChar("coolFan", loaded.acCoolFanSpeed));
-    loaded.acHeatFanSpeed = preferences.getUChar("heatFanSpeed", preferences.getUChar("heatFan", loaded.acHeatFanSpeed));
-    loaded.acCoolTempOffsetC = preferences.getUChar("coolOffset", loaded.acCoolTempOffsetC);
-    loaded.acHeatTempOffsetC = preferences.getUChar("heatOffset", loaded.acHeatTempOffsetC);
+    loaded.acDynamicControlEnabled = preferences.getBool("acDynamic", loaded.acDynamicControlEnabled);
+    loaded.acCoolingFullPowerDeltaC = preferences.getFloat("acCoolFullD", loaded.acCoolingFullPowerDeltaC);
+    loaded.acCoolingMinTempOffsetC = preferences.getFloat("acCoolMinOff", loaded.acCoolingMinTempOffsetC);
+    loaded.acCoolingMaxTempOffsetC = preferences.getFloat("acCoolMaxOff", loaded.acCoolingMaxTempOffsetC);
+    loaded.acCoolingMinSetpointC = preferences.getFloat("acCoolMinT", loaded.acCoolingMinSetpointC);
+    loaded.acCoolingMinFanSpeed = preferences.getUChar("acCoolFanMin", preferences.getUChar("coolFanSpeed", loaded.acCoolingMinFanSpeed));
+    loaded.acCoolingMaxFanSpeed = preferences.getUChar("acCoolFanMax", loaded.acCoolingMaxFanSpeed);
+    loaded.acHeatingFullPowerDeltaC = preferences.getFloat("acHeatFullD", loaded.acHeatingFullPowerDeltaC);
+    loaded.acHeatingMinTempOffsetC = preferences.getFloat("acHeatMinOff", loaded.acHeatingMinTempOffsetC);
+    loaded.acHeatingMaxTempOffsetC = preferences.getFloat("acHeatMaxOff", loaded.acHeatingMaxTempOffsetC);
+    loaded.acHeatingMaxSetpointC = preferences.getFloat("acHeatMaxT", loaded.acHeatingMaxSetpointC);
+    loaded.acHeatingMinFanSpeed = preferences.getUChar("acHeatFanMin", preferences.getUChar("heatFanSpeed", loaded.acHeatingMinFanSpeed));
+    loaded.acHeatingMaxFanSpeed = preferences.getUChar("acHeatFanMax", loaded.acHeatingMaxFanSpeed);
     loaded.decisionIntervalMs = preferences.getULong("decisionMs", preferences.getULong("interval", loaded.decisionIntervalMs));
     loaded.minStateHoldMs = preferences.getULong("holdMs", preferences.getULong("hold", loaded.minStateHoldMs));
     loaded.ventCoolingCheckIntervalMs = preferences.getULong("ventChkMs", preferences.getULong("ventTimeout", loaded.ventCoolingCheckIntervalMs));
@@ -248,58 +272,92 @@ bool ClimateAlgorithm::saveSettings() {
         return false;
     }
 
-    preferences.putBool("autoEnabled", settings.autoEnabled);
-    preferences.putBool("dryRun", settings.dryRun);
-    preferences.putFloat("targetTempC", settings.targetTempC);
-    preferences.putFloat("hysteresisC", settings.hysteresisC);
-    preferences.putFloat("coolStart", settings.coolingStartDeltaC);
-    preferences.putFloat("heatStart", settings.heatingStartDeltaC);
-    preferences.putBool("allowVentCool", settings.allowVentCooling);
-    preferences.putBool("allowAcCool", settings.allowAcCooling);
-    preferences.putBool("allowAcHeat", settings.allowAcHeating);
-    preferences.putFloat("outCoolMinD", settings.outdoorCoolingMinDeltaC);
-    preferences.putFloat("outCoolMaxT", settings.outdoorCoolingMaxTempC);
-    preferences.putBool("ventAlways", settings.autoVentAlwaysOn);
-    preferences.putUChar("ventDefault", settings.autoVentDefaultStep);
-    preferences.putUChar("ventMin", settings.autoVentMinStep);
-    preferences.putUChar("ventCoolStep", settings.autoVentCoolingStep);
-    preferences.putUChar("ventMax", settings.autoVentMaxStep);
-    preferences.putUChar("bathComp", settings.bathExhaustCompStep);
-    preferences.putUChar("hoodComp1", settings.hoodCompStep1);
-    preferences.putUChar("hoodComp2", settings.hoodCompStep2);
-    preferences.putUChar("hoodComp3", settings.hoodCompStep3);
-    preferences.putBool("ventAdditive", settings.additiveVentCompensation);
-    preferences.putFloat("coldLimit", settings.coldOutdoorTempLimitC);
-    preferences.putUChar("coldMaxStep", settings.coldOutdoorMaxVentStep);
-    preferences.putBool("fanInAuto", settings.keepAcFanOnInAuto);
-    preferences.putBool("fanWithVent", settings.keepAcFanOnWithVent);
-    preferences.putUChar("fanOnlyMode", settings.acFanOnlyMode);
-    preferences.putUChar("fanMin", settings.acFanMinSpeed);
-    preferences.putUChar("fanNormal", settings.acFanNormalSpeed);
-    preferences.putUChar("fanBoost", settings.acFanBoostSpeed);
-    preferences.putUChar("fanMax", settings.acFanMaxSpeed);
-    preferences.putBool("fanAuto", settings.acFanAutoAllowed);
-    preferences.putUChar("coolFanSpeed", settings.acCoolFanSpeed);
-    preferences.putUChar("heatFanSpeed", settings.acHeatFanSpeed);
-    preferences.putUChar("coolOffset", settings.acCoolTempOffsetC);
-    preferences.putUChar("heatOffset", settings.acHeatTempOffsetC);
-    preferences.putULong("decisionMs", settings.decisionIntervalMs);
-    preferences.putULong("holdMs", settings.minStateHoldMs);
-    preferences.putULong("ventChkMs", settings.ventCoolingCheckIntervalMs);
-    preferences.putFloat("ventMinDrop", settings.ventCoolingMinDropC);
-    preferences.putBool("ventStepFail", settings.ventCoolingStepUpOnFail);
-    preferences.putBool("ventFbAc", settings.ventCoolingFallbackToAc);
-    preferences.putBool("safeNoIndoor", settings.safeOnIndoorSensorMissing);
-    preferences.putBool("safeEquip", settings.safeOnCriticalEquipmentError);
-    preferences.putBool("diagVerbose", settings.diagnosticVerbose);
-    preferences.putULong("ventCompMs", settings.ventCompensationUpdateIntervalMs);
-    preferences.putULong("ventOffDelay", settings.ventCompensationOffDelayMs);
-    preferences.putBool("ventImmUp", settings.ventCompensationImmediateUp);
-    preferences.putBool("ventImmDown", settings.ventCompensationImmediateDown);
+    uint16_t changedCount = 0;
+    auto putBoolChanged = [&](const char* key, bool value) {
+        if (!preferences.isKey(key) || preferences.getBool(key, !value) != value) {
+            preferences.putBool(key, value);
+            changedCount++;
+        }
+    };
+    auto putUCharChanged = [&](const char* key, uint8_t value) {
+        if (!preferences.isKey(key) || preferences.getUChar(key, value == 0 ? 1 : 0) != value) {
+            preferences.putUChar(key, value);
+            changedCount++;
+        }
+    };
+    auto putULongChanged = [&](const char* key, unsigned long value) {
+        if (!preferences.isKey(key) || preferences.getULong(key, value + 1UL) != value) {
+            preferences.putULong(key, value);
+            changedCount++;
+        }
+    };
+    auto putFloatChanged = [&](const char* key, float value) {
+        if (!preferences.isKey(key) || fabsf(preferences.getFloat(key, value + 1.0f) - value) > 0.001f) {
+            preferences.putFloat(key, value);
+            changedCount++;
+        }
+    };
+
+    putBoolChanged("autoEnabled", settings.autoEnabled);
+    putBoolChanged("dryRun", settings.dryRun);
+    putFloatChanged("targetTempC", settings.targetTempC);
+    putFloatChanged("coolStart", settings.coolingStartDeltaC);
+    putFloatChanged("heatStart", settings.heatingStartDeltaC);
+    putBoolChanged("allowVentCool", settings.allowVentCooling);
+    putBoolChanged("allowAcCool", settings.allowAcCooling);
+    putBoolChanged("allowAcHeat", settings.allowAcHeating);
+    putFloatChanged("outCoolMinD", settings.outdoorCoolingMinDeltaC);
+    putFloatChanged("outCoolMaxT", settings.outdoorCoolingMaxTempC);
+    putBoolChanged("ventAlways", settings.autoVentAlwaysOn);
+    putUCharChanged("ventDefault", settings.autoVentDefaultStep);
+    putUCharChanged("ventMin", settings.autoVentMinStep);
+    putUCharChanged("ventCoolStep", settings.autoVentCoolingStep);
+    putUCharChanged("ventMax", settings.autoVentMaxStep);
+    putUCharChanged("bathComp", settings.bathExhaustCompStep);
+    putUCharChanged("hoodComp1", settings.hoodCompStep1);
+    putUCharChanged("hoodComp2", settings.hoodCompStep2);
+    putUCharChanged("hoodComp3", settings.hoodCompStep3);
+    putBoolChanged("ventAdditive", settings.additiveVentCompensation);
+    putFloatChanged("coldLimit", settings.coldOutdoorTempLimitC);
+    putUCharChanged("coldMaxStep", settings.coldOutdoorMaxVentStep);
+    putBoolChanged("fanInAuto", settings.keepAcFanOnInAuto);
+    putBoolChanged("fanWithVent", settings.keepAcFanOnWithVent);
+    putUCharChanged("fanOnlyMode", settings.acFanOnlyMode);
+    putUCharChanged("fanMin", settings.acFanMinSpeed);
+    putUCharChanged("fanNormal", settings.acFanNormalSpeed);
+    putUCharChanged("fanBoost", settings.acFanBoostSpeed);
+    putUCharChanged("fanMax", settings.acFanMaxSpeed);
+    putBoolChanged("fanAuto", settings.acFanAutoAllowed);
+    putBoolChanged("acDynamic", settings.acDynamicControlEnabled);
+    putFloatChanged("acCoolFullD", settings.acCoolingFullPowerDeltaC);
+    putFloatChanged("acCoolMinOff", settings.acCoolingMinTempOffsetC);
+    putFloatChanged("acCoolMaxOff", settings.acCoolingMaxTempOffsetC);
+    putFloatChanged("acCoolMinT", settings.acCoolingMinSetpointC);
+    putUCharChanged("acCoolFanMin", settings.acCoolingMinFanSpeed);
+    putUCharChanged("acCoolFanMax", settings.acCoolingMaxFanSpeed);
+    putFloatChanged("acHeatFullD", settings.acHeatingFullPowerDeltaC);
+    putFloatChanged("acHeatMinOff", settings.acHeatingMinTempOffsetC);
+    putFloatChanged("acHeatMaxOff", settings.acHeatingMaxTempOffsetC);
+    putFloatChanged("acHeatMaxT", settings.acHeatingMaxSetpointC);
+    putUCharChanged("acHeatFanMin", settings.acHeatingMinFanSpeed);
+    putUCharChanged("acHeatFanMax", settings.acHeatingMaxFanSpeed);
+    putULongChanged("decisionMs", settings.decisionIntervalMs);
+    putULongChanged("holdMs", settings.minStateHoldMs);
+    putULongChanged("ventChkMs", settings.ventCoolingCheckIntervalMs);
+    putFloatChanged("ventMinDrop", settings.ventCoolingMinDropC);
+    putBoolChanged("ventStepFail", settings.ventCoolingStepUpOnFail);
+    putBoolChanged("ventFbAc", settings.ventCoolingFallbackToAc);
+    putBoolChanged("safeNoIndoor", settings.safeOnIndoorSensorMissing);
+    putBoolChanged("safeEquip", settings.safeOnCriticalEquipmentError);
+    putBoolChanged("diagVerbose", settings.diagnosticVerbose);
+    putULongChanged("ventCompMs", settings.ventCompensationUpdateIntervalMs);
+    putULongChanged("ventOffDelay", settings.ventCompensationOffDelayMs);
+    putBoolChanged("ventImmUp", settings.ventCompensationImmediateUp);
+    putBoolChanged("ventImmDown", settings.ventCompensationImmediateDown);
     preferences.end();
 
     autoSettingsDirty = false;
-    Logger::info(TAG_AUTO, "Auto control settings saved");
+    Logger::infof(TAG_AUTO, "Auto control settings saved, changed keys=%u", changedCount);
     return true;
 }
 
@@ -328,7 +386,7 @@ const char* ClimateAlgorithm::activityName(ControllerActivity activity) const {
         case ControllerActivity::Heat: return "Heat";
         case ControllerActivity::Vent: return "Vent";
         case ControllerActivity::Error: return "Error";
-        case ControllerActivity::Hold: return "Hold";
+        case ControllerActivity::Hold: return "StandBy";
         case ControllerActivity::Idle: return "Monitor";
     }
     return "Unknown";
@@ -341,8 +399,8 @@ void ClimateAlgorithm::refreshInputs() {
     status.outdoorTempValid = outdoorTemperatureValid();
     status.targetTempC = settings.targetTempC;
     status.deltaTempC = status.indoorTempValid ? status.indoorTempC - settings.targetTempC : 0.0f;
-    status.needCooling = status.indoorTempValid && status.deltaTempC > settings.coolingStartDeltaC;
-    status.needHeating = status.indoorTempValid && status.deltaTempC < -settings.heatingStartDeltaC;
+    status.needCooling = status.indoorTempValid && status.deltaTempC >= settings.coolingStartDeltaC;
+    status.needHeating = status.indoorTempValid && status.deltaTempC <= -settings.heatingStartDeltaC;
     status.bathExhaustOn = state->environment.exhaustVentEnabled;
     status.hoodLevel = state->environment.kitchenHoodLevel;
     status.vfdOnline = state->vfd.initialized && !state->vfd.communicationError;
@@ -363,6 +421,10 @@ ControllerActivity ClimateAlgorithm::calculateActivity() {
     status.desiredAcMode = 0;
     status.desiredAcTargetTemp = 0;
     status.desiredAcFanSpeed = 0;
+    status.acCoolingRatio = 0.0f;
+    status.acHeatingRatio = 0.0f;
+    status.acCoolingRatio = 0.0f;
+    status.acHeatingRatio = 0.0f;
 
     if (!status.inputValid) {
         if (settings.safeOnIndoorSensorMissing) {
@@ -427,13 +489,8 @@ ControllerActivity ClimateAlgorithm::calculateActivity() {
         return ControllerActivity::Vent;
     }
 
-    if (fabsf(status.deltaTempC) <= settings.hysteresisC) {
-        setReason(settings.keepAcFanOnInAuto ? "Temperature is within hysteresis, AC fan keeps air circulation" : "Temperature is within hysteresis");
-        return hasDecision && currentActivity != ControllerActivity::Idle ? ControllerActivity::Hold : ControllerActivity::Normal;
-    }
-
-    setReason("Temperature delta is below start threshold");
-    return ControllerActivity::Hold;
+    setReason(settings.keepAcFanOnInAuto ? "Temperature is inside neutral zone, AC fan keeps air circulation" : "Temperature is inside neutral zone");
+    return hasDecision && currentActivity != ControllerActivity::Idle ? ControllerActivity::Hold : ControllerActivity::Normal;
 }
 
 ControllerActivity ClimateAlgorithm::applyStateHold(ControllerActivity requested) {
@@ -537,17 +594,15 @@ void ClimateAlgorithm::updateDesiredStateForActivity(ControllerActivity activity
     if (activity == ControllerActivity::AcCool) {
         status.desiredAcPower = true;
         status.desiredAcMode = 3;
-        status.desiredAcTargetTemp = acTargetTemperature(settings.acCoolTempOffsetC);
-        status.desiredAcFanSpeed = settings.acCoolFanSpeed;
+        calculateDynamicCoolingAc(status.desiredAcTargetTemp, status.desiredAcFanSpeed);
     } else if (activity == ControllerActivity::Heat) {
         status.desiredAcPower = true;
         status.desiredAcMode = 4;
-        status.desiredAcTargetTemp = acTargetTemperature(settings.acHeatTempOffsetC);
-        status.desiredAcFanSpeed = settings.acHeatFanSpeed;
+        calculateDynamicHeatingAc(status.desiredAcTargetTemp, status.desiredAcFanSpeed);
     } else if ((settings.keepAcFanOnWithVent && status.desiredVfdPower) || settings.keepAcFanOnInAuto) {
         status.desiredAcPower = true;
         status.desiredAcMode = settings.acFanOnlyMode;
-        status.desiredAcTargetTemp = acTargetTemperature(0);
+        status.desiredAcTargetTemp = clampAcSetpoint(settings.targetTempC);
         status.desiredAcFanSpeed = calculateAcFanSpeedForVfdStep(status.desiredVfdStep);
     }
 }
@@ -705,6 +760,41 @@ uint8_t ClimateAlgorithm::hoodCompensationStep(uint8_t hoodLevel) const {
     }
 }
 
+void ClimateAlgorithm::calculateDynamicCoolingAc(uint8_t& targetTemp, uint8_t& fanSpeed) {
+    const float coolingExcessC = max(0.0f, status.deltaTempC - settings.coolingStartDeltaC);
+    const float ratio = settings.acDynamicControlEnabled
+        ? clampFloat(coolingExcessC / settings.acCoolingFullPowerDeltaC, 0.0f, 1.0f)
+        : 0.0f;
+    status.acCoolingRatio = ratio;
+    status.acHeatingRatio = 0.0f;
+
+    const float fan = settings.acCoolingMinFanSpeed
+        + ratio * (settings.acCoolingMaxFanSpeed - settings.acCoolingMinFanSpeed);
+    fanSpeed = clampAcFan((uint8_t)lroundf(fan), settings.acFanAutoAllowed);
+
+    const float offset = settings.acCoolingMinTempOffsetC
+        + ratio * (settings.acCoolingMaxTempOffsetC - settings.acCoolingMinTempOffsetC);
+    targetTemp = clampAcSetpoint(max(settings.targetTempC - offset, settings.acCoolingMinSetpointC));
+}
+
+void ClimateAlgorithm::calculateDynamicHeatingAc(uint8_t& targetTemp, uint8_t& fanSpeed) {
+    const float heatingErrorC = settings.targetTempC - status.indoorTempC;
+    const float heatingExcessC = max(0.0f, heatingErrorC - settings.heatingStartDeltaC);
+    const float ratio = settings.acDynamicControlEnabled
+        ? clampFloat(heatingExcessC / settings.acHeatingFullPowerDeltaC, 0.0f, 1.0f)
+        : 0.0f;
+    status.acHeatingRatio = ratio;
+    status.acCoolingRatio = 0.0f;
+
+    const float fan = settings.acHeatingMinFanSpeed
+        + ratio * (settings.acHeatingMaxFanSpeed - settings.acHeatingMinFanSpeed);
+    fanSpeed = clampAcFan((uint8_t)lroundf(fan), settings.acFanAutoAllowed);
+
+    const float offset = settings.acHeatingMinTempOffsetC
+        + ratio * (settings.acHeatingMaxTempOffsetC - settings.acHeatingMinTempOffsetC);
+    targetTemp = clampAcSetpoint(min(settings.targetTempC + offset, settings.acHeatingMaxSetpointC));
+}
+
 uint8_t ClimateAlgorithm::calculateAcFanSpeedForVfdStep(uint8_t vfdStep) const {
     uint8_t fan = settings.acFanMinSpeed;
     if (vfdStep >= 6) {
@@ -723,9 +813,9 @@ float ClimateAlgorithm::vfdStepToHz(uint8_t step) const {
     return 20.0f + (step - 1) * 6.0f;
 }
 
-uint8_t ClimateAlgorithm::acTargetTemperature(int8_t offset) const {
-    const int value = (int)lroundf(settings.targetTempC) + offset;
-    return constrain(value, 16, 30);
+uint8_t ClimateAlgorithm::clampAcSetpoint(float value) const {
+    const int valueInt = (int)lroundf(value);
+    return constrain(valueInt, 16, 30);
 }
 
 void ClimateAlgorithm::enterAutoSafeMode(const char* reason) {
@@ -792,7 +882,7 @@ void ClimateAlgorithm::logDecision() const {
     if (!settings.diagnosticVerbose) return;
     Logger::infof(
         TAG_AUTO,
-        "mode=AUTO indoor=%.1f outdoor=%.1f target=%.1f delta=%.1f activity=%s vfd=%u step=%u ac=%u mode=%u fan=%u dryRun=%u",
+        "mode=AUTO indoor=%.1f outdoor=%.1f target=%.1f delta=%.1f activity=%s vfd=%u step=%u ac=%u mode=%u fan=%u acTarget=%u coolRatio=%.2f heatRatio=%.2f dryRun=%u",
         status.indoorTempC,
         status.outdoorTempC,
         settings.targetTempC,
@@ -803,6 +893,9 @@ void ClimateAlgorithm::logDecision() const {
         status.desiredAcPower ? 1 : 0,
         status.desiredAcMode,
         status.desiredAcFanSpeed,
+        status.desiredAcTargetTemp,
+        status.acCoolingRatio,
+        status.acHeatingRatio,
         settings.dryRun ? 1 : 0
     );
     Logger::infof(TAG_AUTO, "reason=%s", status.reason);

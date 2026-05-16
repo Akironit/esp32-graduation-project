@@ -1381,7 +1381,7 @@ const char* DisplayUi::activityName(ControllerActivity activity) const {
         case ControllerActivity::Error:
             return "Error";
         case ControllerActivity::Hold:
-            return "Hold";
+            return "StandBy";
         case ControllerActivity::Idle:
             return "Monitor";
     }
@@ -1419,7 +1419,7 @@ uint16_t DisplayUi::activityColor(ControllerActivity activity) const {
         case ControllerActivity::Error:
             return COLOR_DANGER;
         case ControllerActivity::Hold:
-            return COLOR_WARN;
+            return COLOR_MUTED;
         case ControllerActivity::Idle:
             return COLOR_MUTED;
     }

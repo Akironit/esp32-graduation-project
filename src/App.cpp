@@ -767,6 +767,7 @@ void App::updateModeTransition() {
     }
 
     if (currentMode == DeviceMode::Manual) {
+        state.controllerState.activity = ControllerActivity::Hold;
         applyManualSettingsProfile("entered manual mode");
     } else if (currentMode == DeviceMode::Disabled) {
         state.controllerState.activity = ControllerActivity::Idle;
