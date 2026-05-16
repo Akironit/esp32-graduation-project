@@ -1355,21 +1355,33 @@ void SerialConsole::printAutoHelp() {
     println("--- AUTO commands ---");
     println("auto status");
     println("auto config");
+    println("auto enabled on/off");
     println("auto dry on/off");
-    println("auto log on/off");
+    println("auto verbose on/off");
     println("auto target <temp>");
     println("auto hyst <value>");
-    println("auto outdoor-margin <value>");
-    println("auto outdoor-max <value>");
-    println("auto min-step <0-6>");
-    println("auto normal-step <0-6>");
-    println("auto cool-step <0-6>");
-    println("auto max-step <0-6>");
-    println("auto exhaust-boost <0-6>");
-    println("auto hood-boost <0-6>");
+    println("auto cooling-delta <value>");
+    println("auto heating-delta <value>");
+    println("auto outdoor-min-delta <value>");
+    println("auto outdoor-max-temp <value>");
+    println("auto vent-always on/off");
+    println("auto vent-default-step <0-6>");
+    println("auto vent-min-step <0-6>");
+    println("auto vent-cooling-step <0-6>");
+    println("auto vent-max-step <0-6>");
+    println("auto bath-comp-step <0-6>");
+    println("auto hood-comp-1 <0-6>");
+    println("auto hood-comp-2 <0-6>");
+    println("auto hood-comp-3 <0-6>");
+    println("auto vent-additive on/off");
+    println("auto cold-limit <temp>");
+    println("auto cold-max-step <0-6>");
     println("auto interval <ms>");
     println("auto hold <ms>");
-    println("auto vent-timeout <ms>");
+    println("auto vent-check <ms>");
+    println("auto vent-min-drop <value>");
+    println("auto vent-step-up on/off");
+    println("auto vent-fallback-ac on/off");
     println("auto ac-cool on/off");
     println("auto ac-heat on/off");
     println("auto vent-cool on/off");
@@ -1378,6 +1390,16 @@ void SerialConsole::printAutoHelp() {
     println("auto ac-fan-min <0-4>");
     println("auto ac-fan-normal <0-4>");
     println("auto ac-fan-boost <0-4>");
+    println("auto ac-fan-max <0-4>");
+    println("auto ac-fan-auto on/off");
+    println("auto ac-cool-fan <0-4>");
+    println("auto ac-heat-fan <0-4>");
+    println("auto safe-no-indoor on/off");
+    println("auto safe-equipment on/off");
+    println("auto vent-comp-interval <ms>");
+    println("auto vent-comp-off-delay <ms>");
+    println("auto vent-comp-up on/off");
+    println("auto vent-comp-down on/off");
     println("auto save                         - force save now");
     println("auto load                         - reload from NVS");
     println("auto defaults                     - reset defaults and autosave");
@@ -1749,36 +1771,78 @@ void SerialConsole::processAutoCommand(const String& cmd) {
         println(climateAlgorithm->activityName(status.activity));
         print("dryRun=");
         println(settings.dryRun ? 1 : 0);
-        print("autoLogEnabled=");
-        println(settings.autoLogEnabled ? 1 : 0);
-        print("indoor=");
-        if (status.indoorTempC == DEVICE_DISCONNECTED_C) println("N/A"); else println(status.indoorTempC, 1);
-        print("outdoor=");
-        if (status.outdoorTempC == DEVICE_DISCONNECTED_C) println("N/A"); else println(status.outdoorTempC, 1);
-        print("target=");
+        print("diagnosticVerbose=");
+        println(settings.diagnosticVerbose ? 1 : 0);
+        println("[INPUTS]");
+        print("indoorTempC=");
+        if (!status.indoorTempValid) println("N/A"); else println(status.indoorTempC, 1);
+        print("indoorTempValid=");
+        println(status.indoorTempValid ? 1 : 0);
+        print("outdoorTempC=");
+        if (!status.outdoorTempValid) println("N/A"); else println(status.outdoorTempC, 1);
+        print("outdoorTempValid=");
+        println(status.outdoorTempValid ? 1 : 0);
+        print("bathExhaustOn=");
+        println(status.bathExhaustOn ? 1 : 0);
+        print("hoodLevel=");
+        println((int)status.hoodLevel);
+        print("vfdOnline=");
+        println(status.vfdOnline ? 1 : 0);
+        print("acAvailable=");
+        println(status.acAvailable ? 1 : 0);
+        println("[CALC]");
+        print("targetTempC=");
         println(settings.targetTempC, 1);
-        print("delta=");
-        println(status.deltaC, 1);
-        print("vfdDesiredStep=");
-        println((int)status.vfdDesiredStep);
-        print("desiredVfdPower=");
-        println(status.vfdDesiredPower ? 1 : 0);
-        print("desiredVfdHz=");
-        println(status.vfdDesiredHz, 1);
+        print("deltaTempC=");
+        println(status.deltaTempC, 1);
+        print("needCooling=");
+        println(status.needCooling ? 1 : 0);
+        print("needHeating=");
+        println(status.needHeating ? 1 : 0);
+        print("ventCoolingAllowedNow=");
+        println(status.ventCoolingAllowedNow ? 1 : 0);
+        print("acCoolingAllowedNow=");
+        println(status.acCoolingAllowedNow ? 1 : 0);
+        print("acHeatingAllowedNow=");
+        println(status.acHeatingAllowedNow ? 1 : 0);
+        print("baseVentRequirementStep=");
+        println((int)status.baseVentRequirementStep);
+        print("bathCompStep=");
+        println((int)status.bathCompStep);
+        print("hoodCompStep=");
+        println((int)status.hoodCompStep);
+        print("exhaustCompRequirementStep=");
+        println((int)status.exhaustCompRequirementStep);
+        print("coolingVentRequirementStep=");
+        println((int)status.coolingVentRequirementStep);
+        print("requestedVentStepBeforeLimit=");
+        println((int)status.requestedVentStepBeforeLimit);
+        print("requestedVentStepAfterLimit=");
+        println((int)status.requestedVentStepAfterLimit);
+        print("coldOutdoorLimitActive=");
+        println(status.coldOutdoorLimitActive ? 1 : 0);
+        println("[DESIRED]");
+        print("desired.vfdPower=");
+        println(status.desiredVfdPower ? 1 : 0);
+        print("desired.vfdStep=");
+        println((int)status.desiredVfdStep);
+        print("desired.vfdHz=");
+        println(status.desiredVfdHz, 1);
+        print("desired.acPower=");
+        println(status.desiredAcPower ? 1 : 0);
+        print("desired.acMode=");
+        println((int)status.desiredAcMode);
+        print("desired.acFanSpeed=");
+        println((int)status.desiredAcFanSpeed);
+        print("desired.acTargetTemp=");
+        println((int)status.desiredAcTargetTemp);
+        println("[ACTUAL]");
         print("actualVfdRunning=");
         println(state != nullptr && state->vfd.running ? 1 : 0);
         print("actualVfdStep=");
         println(state != nullptr ? (int)state->vfd.actualStep : 0);
         print("actualVfdHz=");
         if (state != nullptr && state->vfd.hasActualFrequency) println(state->vfd.actualFrequencyHz, 1); else println("N/A");
-        print("acDesiredPower=");
-        println(status.acDesiredPower ? 1 : 0);
-        print("desiredAcMode=");
-        println((int)status.acDesiredMode);
-        print("desiredAcFan=");
-        println((int)status.acDesiredFan);
-        print("desiredAcTemp=");
-        println((int)status.acDesiredTemp);
         print("actualAcPower=");
         println(state != nullptr && state->ac.powerOn ? 1 : 0);
         print("actualAcMode=");
@@ -1789,10 +1853,6 @@ void SerialConsole::processAutoCommand(const String& cmd) {
         println(state != nullptr ? (int)state->ac.temperature : 0);
         print("actualAcBound=");
         println(state != nullptr && state->ac.bound ? 1 : 0);
-        print("keepAcFanOnWithVent=");
-        println(settings.keepAcFanOnWithVent ? 1 : 0);
-        print("keepAcFanOnInAuto=");
-        println(settings.keepAcFanOnInAuto ? 1 : 0);
         print("reason=");
         println(status.reason);
         print("lastApplyResult=");
@@ -1803,6 +1863,8 @@ void SerialConsole::processAutoCommand(const String& cmd) {
         println(String(status.lastCommandMs == 0 ? 0 : millis() - status.lastCommandMs) + " ms");
         print("lastDecisionAge=");
         println(String(status.lastDecisionMs == 0 ? 0 : millis() - status.lastDecisionMs) + " ms");
+        print("lastVentCompensationAge=");
+        println(String(status.lastVentCompensationMs == 0 ? 0 : millis() - status.lastVentCompensationMs) + " ms");
         print("stateHoldAge=");
         println(String(status.stateEnteredMs == 0 ? 0 : millis() - status.stateEnteredMs) + " ms");
         printAutoConfig(settings);
@@ -1847,36 +1909,60 @@ void SerialConsole::processAutoCommand(const String& cmd) {
     value.trim();
 
     bool changed = true;
-    if (key == "dry") {
+    if (key == "enabled") {
+        changed = parseOnOff(value, settings.autoEnabled);
+    } else if (key == "dry") {
         changed = parseOnOff(value, settings.dryRun);
-    } else if (key == "log") {
-        changed = parseOnOff(value, settings.autoLogEnabled);
+    } else if (key == "verbose" || key == "log") {
+        changed = parseOnOff(value, settings.diagnosticVerbose);
     } else if (key == "target") {
         settings.targetTempC = value.toFloat();
     } else if (key == "hyst") {
         settings.hysteresisC = value.toFloat();
-    } else if (key == "outdoor-margin") {
-        settings.outdoorCoolingMarginC = value.toFloat();
-    } else if (key == "outdoor-max") {
-        settings.outdoorCoolingMaxC = value.toFloat();
-    } else if (key == "min-step") {
-        changed = parseStep(value, settings.minVentStep);
-    } else if (key == "normal-step") {
-        changed = parseStep(value, settings.normalVentStep);
-    } else if (key == "cool-step") {
-        changed = parseStep(value, settings.coolingVentStep);
-    } else if (key == "max-step") {
-        changed = parseStep(value, settings.maxVentStep);
-    } else if (key == "exhaust-boost") {
-        changed = parseStep(value, settings.exhaustBoostStep);
-    } else if (key == "hood-boost") {
-        changed = parseStep(value, settings.kitchenHoodBoostStep);
+    } else if (key == "cooling-delta") {
+        settings.coolingStartDeltaC = value.toFloat();
+    } else if (key == "heating-delta") {
+        settings.heatingStartDeltaC = value.toFloat();
+    } else if (key == "outdoor-min-delta" || key == "outdoor-margin") {
+        settings.outdoorCoolingMinDeltaC = value.toFloat();
+    } else if (key == "outdoor-max" || key == "outdoor-max-temp") {
+        settings.outdoorCoolingMaxTempC = value.toFloat();
+    } else if (key == "vent-always") {
+        changed = parseOnOff(value, settings.autoVentAlwaysOn);
+    } else if (key == "vent-default-step" || key == "normal-step") {
+        changed = parseStep(value, settings.autoVentDefaultStep);
+    } else if (key == "vent-min-step" || key == "min-step") {
+        changed = parseStep(value, settings.autoVentMinStep);
+    } else if (key == "vent-cooling-step" || key == "cool-step") {
+        changed = parseStep(value, settings.autoVentCoolingStep);
+    } else if (key == "vent-max-step" || key == "max-step") {
+        changed = parseStep(value, settings.autoVentMaxStep);
+    } else if (key == "bath-comp-step" || key == "exhaust-boost") {
+        changed = parseStep(value, settings.bathExhaustCompStep);
+    } else if (key == "hood-comp-1") {
+        changed = parseStep(value, settings.hoodCompStep1);
+    } else if (key == "hood-comp-2") {
+        changed = parseStep(value, settings.hoodCompStep2);
+    } else if (key == "hood-comp-3" || key == "hood-boost") {
+        changed = parseStep(value, settings.hoodCompStep3);
+    } else if (key == "vent-additive") {
+        changed = parseOnOff(value, settings.additiveVentCompensation);
+    } else if (key == "cold-limit") {
+        settings.coldOutdoorTempLimitC = value.toFloat();
+    } else if (key == "cold-max-step") {
+        changed = parseStep(value, settings.coldOutdoorMaxVentStep);
     } else if (key == "interval") {
         settings.decisionIntervalMs = value.toInt();
     } else if (key == "hold") {
         settings.minStateHoldMs = value.toInt();
-    } else if (key == "vent-timeout") {
-        settings.ventCoolTimeoutMs = value.toInt();
+    } else if (key == "vent-check") {
+        settings.ventCoolingCheckIntervalMs = value.toInt();
+    } else if (key == "vent-min-drop") {
+        settings.ventCoolingMinDropC = value.toFloat();
+    } else if (key == "vent-step-up") {
+        changed = parseOnOff(value, settings.ventCoolingStepUpOnFail);
+    } else if (key == "vent-fallback-ac") {
+        changed = parseOnOff(value, settings.ventCoolingFallbackToAc);
     } else if (key == "ac-cool") {
         changed = parseOnOff(value, settings.allowAcCooling);
     } else if (key == "ac-heat") {
@@ -1893,6 +1979,26 @@ void SerialConsole::processAutoCommand(const String& cmd) {
         changed = parseAcFan(value, settings.acFanNormalSpeed);
     } else if (key == "ac-fan-boost") {
         changed = parseAcFan(value, settings.acFanBoostSpeed);
+    } else if (key == "ac-fan-max") {
+        changed = parseAcFan(value, settings.acFanMaxSpeed);
+    } else if (key == "ac-fan-auto") {
+        changed = parseOnOff(value, settings.acFanAutoAllowed);
+    } else if (key == "ac-cool-fan") {
+        changed = parseAcFan(value, settings.acCoolFanSpeed);
+    } else if (key == "ac-heat-fan") {
+        changed = parseAcFan(value, settings.acHeatFanSpeed);
+    } else if (key == "safe-no-indoor") {
+        changed = parseOnOff(value, settings.safeOnIndoorSensorMissing);
+    } else if (key == "safe-equipment") {
+        changed = parseOnOff(value, settings.safeOnCriticalEquipmentError);
+    } else if (key == "vent-comp-interval") {
+        settings.ventCompensationUpdateIntervalMs = value.toInt();
+    } else if (key == "vent-comp-off-delay") {
+        settings.ventCompensationOffDelayMs = value.toInt();
+    } else if (key == "vent-comp-up") {
+        changed = parseOnOff(value, settings.ventCompensationImmediateUp);
+    } else if (key == "vent-comp-down") {
+        changed = parseOnOff(value, settings.ventCompensationImmediateDown);
     } else {
         println("[AUTO] Unknown auto setting. Use: auto help");
         return;
@@ -1911,42 +2017,56 @@ void SerialConsole::processAutoCommand(const String& cmd) {
 void SerialConsole::printAutoConfig(const AutoControlSettings& settings) {
     println();
     println("[AUTO] Config");
-    print("target=");
+    print("autoEnabled=");
+    println(settings.autoEnabled ? 1 : 0);
+    print("dryRun=");
+    println(settings.dryRun ? 1 : 0);
+    print("targetTempC=");
     println(settings.targetTempC, 1);
-    print("hysteresis=");
+    print("hysteresisC=");
     println(settings.hysteresisC, 2);
-    print("coolingStartDelta=");
+    print("coolingStartDeltaC=");
     println(settings.coolingStartDeltaC, 2);
-    print("heatingStartDelta=");
+    print("heatingStartDeltaC=");
     println(settings.heatingStartDeltaC, 2);
-    print("outdoorCoolingMargin=");
-    println(settings.outdoorCoolingMarginC, 2);
-    print("outdoorCoolingMax=");
-    println(settings.outdoorCoolingMaxC, 1);
-    print("ventCoolMinDrop=");
-    println(settings.ventCoolMinDropC, 2);
-    print("minVentStep=");
-    println((int)settings.minVentStep);
-    print("normalVentStep=");
-    println((int)settings.normalVentStep);
-    print("coolingVentStep=");
-    println((int)settings.coolingVentStep);
-    print("maxVentStep=");
-    println((int)settings.maxVentStep);
-    print("exhaustBoostStep=");
-    println((int)settings.exhaustBoostStep);
-    print("kitchenHoodBoostStep=");
-    println((int)settings.kitchenHoodBoostStep);
+    print("allowVentCooling=");
+    println(settings.allowVentCooling ? 1 : 0);
     print("allowAcCooling=");
     println(settings.allowAcCooling ? 1 : 0);
     print("allowAcHeating=");
     println(settings.allowAcHeating ? 1 : 0);
-    print("allowVentCooling=");
-    println(settings.allowVentCooling ? 1 : 0);
-    print("keepAcFanOnWithVent=");
-    println(settings.keepAcFanOnWithVent ? 1 : 0);
+    print("outdoorCoolingMinDeltaC=");
+    println(settings.outdoorCoolingMinDeltaC, 2);
+    print("outdoorCoolingMaxTempC=");
+    println(settings.outdoorCoolingMaxTempC, 1);
+    print("autoVentAlwaysOn=");
+    println(settings.autoVentAlwaysOn ? 1 : 0);
+    print("autoVentDefaultStep=");
+    println((int)settings.autoVentDefaultStep);
+    print("autoVentMinStep=");
+    println((int)settings.autoVentMinStep);
+    print("autoVentCoolingStep=");
+    println((int)settings.autoVentCoolingStep);
+    print("autoVentMaxStep=");
+    println((int)settings.autoVentMaxStep);
+    print("bathExhaustCompStep=");
+    println((int)settings.bathExhaustCompStep);
+    print("hoodCompStep1=");
+    println((int)settings.hoodCompStep1);
+    print("hoodCompStep2=");
+    println((int)settings.hoodCompStep2);
+    print("hoodCompStep3=");
+    println((int)settings.hoodCompStep3);
+    print("additiveVentCompensation=");
+    println(settings.additiveVentCompensation ? 1 : 0);
+    print("coldOutdoorTempLimitC=");
+    println(settings.coldOutdoorTempLimitC, 1);
+    print("coldOutdoorMaxVentStep=");
+    println((int)settings.coldOutdoorMaxVentStep);
     print("keepAcFanOnInAuto=");
     println(settings.keepAcFanOnInAuto ? 1 : 0);
+    print("keepAcFanOnWithVent=");
+    println(settings.keepAcFanOnWithVent ? 1 : 0);
     print("acFanOnlyMode=");
     println((int)settings.acFanOnlyMode);
     print("acFanMinSpeed=");
@@ -1955,18 +2075,38 @@ void SerialConsole::printAutoConfig(const AutoControlSettings& settings) {
     println((int)settings.acFanNormalSpeed);
     print("acFanBoostSpeed=");
     println((int)settings.acFanBoostSpeed);
-    print("acCoolFanMode=");
-    println((int)settings.acCoolFanMode);
-    print("acHeatFanMode=");
-    println((int)settings.acHeatFanMode);
+    print("acFanMaxSpeed=");
+    println((int)settings.acFanMaxSpeed);
+    print("acFanAutoAllowed=");
+    println(settings.acFanAutoAllowed ? 1 : 0);
+    print("acCoolFanSpeed=");
+    println((int)settings.acCoolFanSpeed);
+    print("acHeatFanSpeed=");
+    println((int)settings.acHeatFanSpeed);
     print("decisionIntervalMs=");
     println(String(settings.decisionIntervalMs));
     print("minStateHoldMs=");
     println(String(settings.minStateHoldMs));
-    print("ventCoolTimeoutMs=");
-    println(String(settings.ventCoolTimeoutMs));
-    print("dryRun=");
-    println(settings.dryRun ? 1 : 0);
-    print("autoLogEnabled=");
-    println(settings.autoLogEnabled ? 1 : 0);
+    print("ventCoolingCheckIntervalMs=");
+    println(String(settings.ventCoolingCheckIntervalMs));
+    print("ventCoolingMinDropC=");
+    println(settings.ventCoolingMinDropC, 2);
+    print("ventCoolingStepUpOnFail=");
+    println(settings.ventCoolingStepUpOnFail ? 1 : 0);
+    print("ventCoolingFallbackToAc=");
+    println(settings.ventCoolingFallbackToAc ? 1 : 0);
+    print("safeOnIndoorSensorMissing=");
+    println(settings.safeOnIndoorSensorMissing ? 1 : 0);
+    print("safeOnCriticalEquipmentError=");
+    println(settings.safeOnCriticalEquipmentError ? 1 : 0);
+    print("diagnosticVerbose=");
+    println(settings.diagnosticVerbose ? 1 : 0);
+    print("ventCompensationUpdateIntervalMs=");
+    println(String(settings.ventCompensationUpdateIntervalMs));
+    print("ventCompensationOffDelayMs=");
+    println(String(settings.ventCompensationOffDelayMs));
+    print("ventCompensationImmediateUp=");
+    println(settings.ventCompensationImmediateUp ? 1 : 0);
+    print("ventCompensationImmediateDown=");
+    println(settings.ventCompensationImmediateDown ? 1 : 0);
 }
