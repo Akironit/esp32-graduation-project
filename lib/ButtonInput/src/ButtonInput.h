@@ -10,7 +10,7 @@ public:
         LongPress
     };
 
-    void begin(bool activeLow = true, unsigned long debounceMs = 50, unsigned long longPressMs = 500);
+    void begin(bool activeLow = true, unsigned long debounceMs = 50, unsigned long longPressMs = 500, unsigned long repeatMs = 150);
     Event update(bool rawPressed, unsigned long nowMs);
     bool isPressed() const;
     bool isActive() const;
@@ -23,6 +23,8 @@ private:
 
     unsigned long debounceMs = 50;
     unsigned long longPressMs = 500;
+    unsigned long repeatMs = 150;
     unsigned long lastRawChangeMs = 0;
     unsigned long pressedSinceMs = 0;
+    unsigned long lastLongPressMs = 0;
 };

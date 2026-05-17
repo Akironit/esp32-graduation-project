@@ -104,7 +104,7 @@ void App::update() {
     updateModeTransition();
     climateAlgorithm.update();
     updateDeviceState();
-    display.update(state);
+    display.update(state, climateAlgorithm.getSettings());
     updateDeferredSettingsSave();
     updateHeatPump();
     updateIoExpanderInputs();
@@ -485,15 +485,10 @@ void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
         button = DisplayUi::Button::Ok;
     }
 
-    if (event == ButtonInput::Event::LongPress) {
-        Logger::debugf(TAG_INPUT, "Button %s long press", name);
-        display.handleButton(button, true, state);
-        return;
-    }
-
-    Logger::debugf(TAG_INPUT, "Button %s short press", name);
+    const bool longPress = event == ButtonInput::Event::LongPress;
+    Logger::debugf(TAG_INPUT, "Button %s %s press", name, longPress ? "long" : "short");
     const float previousTargetTemp = state.environment.targetIndoorTempC;
-    const DisplayUi::Action action = display.handleButton(button, false, state);
+    const DisplayUi::Action action = display.handleButton(button, longPress, state, climateAlgorithm.getSettings());
 
     if (action.settingsChanged) {
         scheduleUserSettingsSave();
@@ -533,6 +528,9 @@ void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
                 controller.vfdSetFrequency(vfdStepToHz(state.settings.manualVfdStep), "display", vfdCommandSyncActive);
             }
             requestVfdCommandSync("display frequency confirm");
+            break;
+        case DisplayUi::ActionType::AutoSettings:
+            climateAlgorithm.setSettings(action.autoSettings);
             break;
         case DisplayUi::ActionType::None:
             break;

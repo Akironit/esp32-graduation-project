@@ -1,5 +1,7 @@
 #include "DisplayUi.h"
 
+#include <math.h>
+
 #include "Logger.h"
 
 namespace {
@@ -52,6 +54,289 @@ void setAcModeTemperature(UserSettingsSnapshot& settings, uint8_t mode, uint8_t 
 
     settings.manualAcModeTemperatures[mode] = normalizeAcTemperature(temperature);
 }
+
+enum class AutoSettingType : uint8_t {
+    Bool,
+    UInt,
+    Float,
+    Milliseconds
+};
+
+enum class AutoSettingId : uint8_t {
+    AutoEnabled,
+    DryRun,
+    DiagnosticVerbose,
+    TargetTemp,
+    CoolingDelta,
+    HeatingDelta,
+    AllowVentCooling,
+    AllowAcCooling,
+    AllowAcHeating,
+    OutdoorMinDelta,
+    OutdoorMaxTemp,
+    VentAlwaysOn,
+    VentDefaultStep,
+    VentMinStep,
+    VentCoolingStep,
+    VentMaxStep,
+    BathCompStep,
+    HoodComp1,
+    HoodComp2,
+    HoodComp3,
+    AdditiveVent,
+    ColdLimit,
+    ColdMaxStep,
+    AcFanInAuto,
+    AcFanWithVent,
+    AcFanMode,
+    AcFanMin,
+    AcFanNormal,
+    AcFanBoost,
+    AcFanMax,
+    AcFanAuto,
+    AcDynamic,
+    AcCoolFullDelta,
+    AcCoolMinOffset,
+    AcCoolMaxOffset,
+    AcCoolMinTemp,
+    AcCoolFanMin,
+    AcCoolFanMax,
+    AcHeatFullDelta,
+    AcHeatMinOffset,
+    AcHeatMaxOffset,
+    AcHeatMaxTemp,
+    AcHeatFanMin,
+    AcHeatFanMax,
+    DecisionInterval,
+    MinStateHold,
+    VentCoolCheck,
+    VentCoolMinDrop,
+    VentCoolStepUp,
+    VentCoolFallback,
+    SafeNoIndoor,
+    SafeEquipment,
+    VentCompInterval,
+    VentCompOffDelay,
+    VentCompUp,
+    VentCompDown
+};
+
+struct AutoSettingDescriptor {
+    AutoSettingId id;
+    const char* group;
+    const char* label;
+    AutoSettingType type;
+    float minValue;
+    float maxValue;
+    float step;
+    float fastStep;
+    uint8_t decimals;
+    const char* unit;
+};
+
+constexpr AutoSettingDescriptor AUTO_SETTINGS[] = {
+    {AutoSettingId::AutoEnabled, "MAIN", "autoEnabled", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
+    {AutoSettingId::DryRun, "MAIN", "dryRun", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
+    {AutoSettingId::DiagnosticVerbose, "MAIN", "diagnosticVerbose", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
+    {AutoSettingId::TargetTemp, "MAIN", "targetTempC", AutoSettingType::Float, 16.0f, 30.0f, 0.5f, 1.0f, 1, "C"},
+    {AutoSettingId::CoolingDelta, "MAIN", "coolingStartDeltaC", AutoSettingType::Float, 0.1f, 5.0f, 0.1f, 0.5f, 1, "C"},
+    {AutoSettingId::HeatingDelta, "MAIN", "heatingStartDeltaC", AutoSettingType::Float, 0.1f, 5.0f, 0.1f, 0.5f, 1, "C"},
+    {AutoSettingId::AllowVentCooling, "ALLOW", "allowVentCooling", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
+    {AutoSettingId::AllowAcCooling, "ALLOW", "allowAcCooling", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
+    {AutoSettingId::AllowAcHeating, "ALLOW", "allowAcHeating", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
+    {AutoSettingId::OutdoorMinDelta, "FREE COOL", "outdoorCoolingMinDeltaC", AutoSettingType::Float, 1.0f, 20.0f, 0.5f, 1.0f, 1, "C"},
+    {AutoSettingId::OutdoorMaxTemp, "FREE COOL", "outdoorCoolingMaxTempC", AutoSettingType::Float, 5.0f, 35.0f, 0.5f, 1.0f, 1, "C"},
+    {AutoSettingId::VentAlwaysOn, "VENT", "autoVentAlwaysOn", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
+    {AutoSettingId::VentDefaultStep, "VENT", "autoVentDefaultStep", AutoSettingType::UInt, 0, 6, 1, 1, 0, ""},
+    {AutoSettingId::VentMinStep, "VENT", "autoVentMinStep", AutoSettingType::UInt, 0, 6, 1, 1, 0, ""},
+    {AutoSettingId::VentCoolingStep, "VENT", "autoVentCoolingStep", AutoSettingType::UInt, 0, 6, 1, 1, 0, ""},
+    {AutoSettingId::VentMaxStep, "VENT", "autoVentMaxStep", AutoSettingType::UInt, 0, 6, 1, 1, 0, ""},
+    {AutoSettingId::BathCompStep, "EXHAUST", "bathExhaustCompStep", AutoSettingType::UInt, 0, 6, 1, 1, 0, ""},
+    {AutoSettingId::HoodComp1, "EXHAUST", "hoodCompStep1", AutoSettingType::UInt, 0, 6, 1, 1, 0, ""},
+    {AutoSettingId::HoodComp2, "EXHAUST", "hoodCompStep2", AutoSettingType::UInt, 0, 6, 1, 1, 0, ""},
+    {AutoSettingId::HoodComp3, "EXHAUST", "hoodCompStep3", AutoSettingType::UInt, 0, 6, 1, 1, 0, ""},
+    {AutoSettingId::AdditiveVent, "EXHAUST", "additiveVentComp", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
+    {AutoSettingId::ColdLimit, "COLD LIMIT", "coldOutdoorTempLimitC", AutoSettingType::Float, -30.0f, 10.0f, 0.5f, 1.0f, 1, "C"},
+    {AutoSettingId::ColdMaxStep, "COLD LIMIT", "coldOutdoorMaxVentStep", AutoSettingType::UInt, 0, 6, 1, 1, 0, ""},
+    {AutoSettingId::AcFanInAuto, "AC FAN", "keepAcFanOnInAuto", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
+    {AutoSettingId::AcFanWithVent, "AC FAN", "keepAcFanOnWithVent", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
+    {AutoSettingId::AcFanMode, "AC FAN", "acFanOnlyMode", AutoSettingType::UInt, 1, 5, 1, 1, 0, ""},
+    {AutoSettingId::AcFanMin, "AC FAN", "acFanMinSpeed", AutoSettingType::UInt, 0, 4, 1, 1, 0, ""},
+    {AutoSettingId::AcFanNormal, "AC FAN", "acFanNormalSpeed", AutoSettingType::UInt, 0, 4, 1, 1, 0, ""},
+    {AutoSettingId::AcFanBoost, "AC FAN", "acFanBoostSpeed", AutoSettingType::UInt, 0, 4, 1, 1, 0, ""},
+    {AutoSettingId::AcFanMax, "AC FAN", "acFanMaxSpeed", AutoSettingType::UInt, 0, 4, 1, 1, 0, ""},
+    {AutoSettingId::AcFanAuto, "AC FAN", "acFanAutoAllowed", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
+    {AutoSettingId::AcDynamic, "AC DYNAMIC", "acDynamicControl", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
+    {AutoSettingId::AcCoolFullDelta, "AC DYNAMIC", "acCoolingFullDelta", AutoSettingType::Float, 0.1f, 10.0f, 0.1f, 0.5f, 1, "C"},
+    {AutoSettingId::AcCoolMinOffset, "AC DYNAMIC", "acCoolingMinOffset", AutoSettingType::Float, 0.0f, 8.0f, 0.1f, 0.5f, 1, "C"},
+    {AutoSettingId::AcCoolMaxOffset, "AC DYNAMIC", "acCoolingMaxOffset", AutoSettingType::Float, 0.0f, 10.0f, 0.1f, 0.5f, 1, "C"},
+    {AutoSettingId::AcCoolMinTemp, "AC DYNAMIC", "acCoolingMinSetpoint", AutoSettingType::Float, 16.0f, 30.0f, 1.0f, 2.0f, 0, "C"},
+    {AutoSettingId::AcCoolFanMin, "AC DYNAMIC", "acCoolingMinFan", AutoSettingType::UInt, 0, 4, 1, 1, 0, ""},
+    {AutoSettingId::AcCoolFanMax, "AC DYNAMIC", "acCoolingMaxFan", AutoSettingType::UInt, 0, 4, 1, 1, 0, ""},
+    {AutoSettingId::AcHeatFullDelta, "AC HEAT", "acHeatingFullDelta", AutoSettingType::Float, 0.1f, 10.0f, 0.1f, 0.5f, 1, "C"},
+    {AutoSettingId::AcHeatMinOffset, "AC HEAT", "acHeatingMinOffset", AutoSettingType::Float, 0.0f, 8.0f, 0.1f, 0.5f, 1, "C"},
+    {AutoSettingId::AcHeatMaxOffset, "AC HEAT", "acHeatingMaxOffset", AutoSettingType::Float, 0.0f, 10.0f, 0.1f, 0.5f, 1, "C"},
+    {AutoSettingId::AcHeatMaxTemp, "AC HEAT", "acHeatingMaxSetpoint", AutoSettingType::Float, 16.0f, 30.0f, 1.0f, 2.0f, 0, "C"},
+    {AutoSettingId::AcHeatFanMin, "AC HEAT", "acHeatingMinFan", AutoSettingType::UInt, 0, 4, 1, 1, 0, ""},
+    {AutoSettingId::AcHeatFanMax, "AC HEAT", "acHeatingMaxFan", AutoSettingType::UInt, 0, 4, 1, 1, 0, ""},
+    {AutoSettingId::DecisionInterval, "TIMING", "decisionIntervalMs", AutoSettingType::Milliseconds, 1000, 60000, 1000, 10000, 0, "ms"},
+    {AutoSettingId::MinStateHold, "TIMING", "minStateHoldMs", AutoSettingType::Milliseconds, 0, 3600000, 10000, 60000, 0, "ms"},
+    {AutoSettingId::VentCoolCheck, "TIMING", "ventCoolingCheckMs", AutoSettingType::Milliseconds, 60000, 21600000, 60000, 300000, 0, "ms"},
+    {AutoSettingId::VentCoolMinDrop, "TIMING", "ventCoolingMinDropC", AutoSettingType::Float, 0.0f, 5.0f, 0.1f, 0.5f, 1, "C"},
+    {AutoSettingId::VentCoolStepUp, "TIMING", "ventCoolingStepUp", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
+    {AutoSettingId::VentCoolFallback, "TIMING", "ventCoolingFallbackAc", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
+    {AutoSettingId::SafeNoIndoor, "SAFETY", "safeOnIndoorMissing", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
+    {AutoSettingId::SafeEquipment, "SAFETY", "safeOnEquipmentErr", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
+    {AutoSettingId::VentCompInterval, "FAST VENT", "ventCompIntervalMs", AutoSettingType::Milliseconds, 500, 10000, 500, 1000, 0, "ms"},
+    {AutoSettingId::VentCompOffDelay, "FAST VENT", "ventCompOffDelayMs", AutoSettingType::Milliseconds, 0, 300000, 1000, 60000, 0, "ms"},
+    {AutoSettingId::VentCompUp, "FAST VENT", "ventCompImmediateUp", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
+    {AutoSettingId::VentCompDown, "FAST VENT", "ventCompImmediateDown", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""}
+};
+
+constexpr uint8_t AUTO_SETTINGS_COUNT = sizeof(AUTO_SETTINGS) / sizeof(AUTO_SETTINGS[0]);
+
+float clampAutoValue(float value, const AutoSettingDescriptor& descriptor) {
+    if (value < descriptor.minValue) return descriptor.minValue;
+    if (value > descriptor.maxValue) return descriptor.maxValue;
+    return value;
+}
+
+float getAutoSettingValue(const AutoControlSettings& settings, AutoSettingId id) {
+    switch (id) {
+        case AutoSettingId::AutoEnabled: return settings.autoEnabled ? 1 : 0;
+        case AutoSettingId::DryRun: return settings.dryRun ? 1 : 0;
+        case AutoSettingId::DiagnosticVerbose: return settings.diagnosticVerbose ? 1 : 0;
+        case AutoSettingId::TargetTemp: return settings.targetTempC;
+        case AutoSettingId::CoolingDelta: return settings.coolingStartDeltaC;
+        case AutoSettingId::HeatingDelta: return settings.heatingStartDeltaC;
+        case AutoSettingId::AllowVentCooling: return settings.allowVentCooling ? 1 : 0;
+        case AutoSettingId::AllowAcCooling: return settings.allowAcCooling ? 1 : 0;
+        case AutoSettingId::AllowAcHeating: return settings.allowAcHeating ? 1 : 0;
+        case AutoSettingId::OutdoorMinDelta: return settings.outdoorCoolingMinDeltaC;
+        case AutoSettingId::OutdoorMaxTemp: return settings.outdoorCoolingMaxTempC;
+        case AutoSettingId::VentAlwaysOn: return settings.autoVentAlwaysOn ? 1 : 0;
+        case AutoSettingId::VentDefaultStep: return settings.autoVentDefaultStep;
+        case AutoSettingId::VentMinStep: return settings.autoVentMinStep;
+        case AutoSettingId::VentCoolingStep: return settings.autoVentCoolingStep;
+        case AutoSettingId::VentMaxStep: return settings.autoVentMaxStep;
+        case AutoSettingId::BathCompStep: return settings.bathExhaustCompStep;
+        case AutoSettingId::HoodComp1: return settings.hoodCompStep1;
+        case AutoSettingId::HoodComp2: return settings.hoodCompStep2;
+        case AutoSettingId::HoodComp3: return settings.hoodCompStep3;
+        case AutoSettingId::AdditiveVent: return settings.additiveVentCompensation ? 1 : 0;
+        case AutoSettingId::ColdLimit: return settings.coldOutdoorTempLimitC;
+        case AutoSettingId::ColdMaxStep: return settings.coldOutdoorMaxVentStep;
+        case AutoSettingId::AcFanInAuto: return settings.keepAcFanOnInAuto ? 1 : 0;
+        case AutoSettingId::AcFanWithVent: return settings.keepAcFanOnWithVent ? 1 : 0;
+        case AutoSettingId::AcFanMode: return settings.acFanOnlyMode;
+        case AutoSettingId::AcFanMin: return settings.acFanMinSpeed;
+        case AutoSettingId::AcFanNormal: return settings.acFanNormalSpeed;
+        case AutoSettingId::AcFanBoost: return settings.acFanBoostSpeed;
+        case AutoSettingId::AcFanMax: return settings.acFanMaxSpeed;
+        case AutoSettingId::AcFanAuto: return settings.acFanAutoAllowed ? 1 : 0;
+        case AutoSettingId::AcDynamic: return settings.acDynamicControlEnabled ? 1 : 0;
+        case AutoSettingId::AcCoolFullDelta: return settings.acCoolingFullPowerDeltaC;
+        case AutoSettingId::AcCoolMinOffset: return settings.acCoolingMinTempOffsetC;
+        case AutoSettingId::AcCoolMaxOffset: return settings.acCoolingMaxTempOffsetC;
+        case AutoSettingId::AcCoolMinTemp: return settings.acCoolingMinSetpointC;
+        case AutoSettingId::AcCoolFanMin: return settings.acCoolingMinFanSpeed;
+        case AutoSettingId::AcCoolFanMax: return settings.acCoolingMaxFanSpeed;
+        case AutoSettingId::AcHeatFullDelta: return settings.acHeatingFullPowerDeltaC;
+        case AutoSettingId::AcHeatMinOffset: return settings.acHeatingMinTempOffsetC;
+        case AutoSettingId::AcHeatMaxOffset: return settings.acHeatingMaxTempOffsetC;
+        case AutoSettingId::AcHeatMaxTemp: return settings.acHeatingMaxSetpointC;
+        case AutoSettingId::AcHeatFanMin: return settings.acHeatingMinFanSpeed;
+        case AutoSettingId::AcHeatFanMax: return settings.acHeatingMaxFanSpeed;
+        case AutoSettingId::DecisionInterval: return settings.decisionIntervalMs;
+        case AutoSettingId::MinStateHold: return settings.minStateHoldMs;
+        case AutoSettingId::VentCoolCheck: return settings.ventCoolingCheckIntervalMs;
+        case AutoSettingId::VentCoolMinDrop: return settings.ventCoolingMinDropC;
+        case AutoSettingId::VentCoolStepUp: return settings.ventCoolingStepUpOnFail ? 1 : 0;
+        case AutoSettingId::VentCoolFallback: return settings.ventCoolingFallbackToAc ? 1 : 0;
+        case AutoSettingId::SafeNoIndoor: return settings.safeOnIndoorSensorMissing ? 1 : 0;
+        case AutoSettingId::SafeEquipment: return settings.safeOnCriticalEquipmentError ? 1 : 0;
+        case AutoSettingId::VentCompInterval: return settings.ventCompensationUpdateIntervalMs;
+        case AutoSettingId::VentCompOffDelay: return settings.ventCompensationOffDelayMs;
+        case AutoSettingId::VentCompUp: return settings.ventCompensationImmediateUp ? 1 : 0;
+        case AutoSettingId::VentCompDown: return settings.ventCompensationImmediateDown ? 1 : 0;
+    }
+
+    return 0.0f;
+}
+
+void setAutoSettingValue(AutoControlSettings& settings, AutoSettingId id, float value) {
+    const uint8_t byteValue = (uint8_t)roundf(value);
+    const unsigned long msValue = (unsigned long)roundf(value);
+    switch (id) {
+        case AutoSettingId::AutoEnabled: settings.autoEnabled = value >= 0.5f; break;
+        case AutoSettingId::DryRun: settings.dryRun = value >= 0.5f; break;
+        case AutoSettingId::DiagnosticVerbose: settings.diagnosticVerbose = value >= 0.5f; break;
+        case AutoSettingId::TargetTemp: settings.targetTempC = value; break;
+        case AutoSettingId::CoolingDelta: settings.coolingStartDeltaC = value; break;
+        case AutoSettingId::HeatingDelta: settings.heatingStartDeltaC = value; break;
+        case AutoSettingId::AllowVentCooling: settings.allowVentCooling = value >= 0.5f; break;
+        case AutoSettingId::AllowAcCooling: settings.allowAcCooling = value >= 0.5f; break;
+        case AutoSettingId::AllowAcHeating: settings.allowAcHeating = value >= 0.5f; break;
+        case AutoSettingId::OutdoorMinDelta: settings.outdoorCoolingMinDeltaC = value; break;
+        case AutoSettingId::OutdoorMaxTemp: settings.outdoorCoolingMaxTempC = value; break;
+        case AutoSettingId::VentAlwaysOn: settings.autoVentAlwaysOn = value >= 0.5f; break;
+        case AutoSettingId::VentDefaultStep: settings.autoVentDefaultStep = byteValue; break;
+        case AutoSettingId::VentMinStep: settings.autoVentMinStep = byteValue; break;
+        case AutoSettingId::VentCoolingStep: settings.autoVentCoolingStep = byteValue; break;
+        case AutoSettingId::VentMaxStep: settings.autoVentMaxStep = byteValue; break;
+        case AutoSettingId::BathCompStep: settings.bathExhaustCompStep = byteValue; break;
+        case AutoSettingId::HoodComp1: settings.hoodCompStep1 = byteValue; break;
+        case AutoSettingId::HoodComp2: settings.hoodCompStep2 = byteValue; break;
+        case AutoSettingId::HoodComp3: settings.hoodCompStep3 = byteValue; break;
+        case AutoSettingId::AdditiveVent: settings.additiveVentCompensation = value >= 0.5f; break;
+        case AutoSettingId::ColdLimit: settings.coldOutdoorTempLimitC = value; break;
+        case AutoSettingId::ColdMaxStep: settings.coldOutdoorMaxVentStep = byteValue; break;
+        case AutoSettingId::AcFanInAuto: settings.keepAcFanOnInAuto = value >= 0.5f; break;
+        case AutoSettingId::AcFanWithVent: settings.keepAcFanOnWithVent = value >= 0.5f; break;
+        case AutoSettingId::AcFanMode: settings.acFanOnlyMode = byteValue; break;
+        case AutoSettingId::AcFanMin: settings.acFanMinSpeed = byteValue; break;
+        case AutoSettingId::AcFanNormal: settings.acFanNormalSpeed = byteValue; break;
+        case AutoSettingId::AcFanBoost: settings.acFanBoostSpeed = byteValue; break;
+        case AutoSettingId::AcFanMax: settings.acFanMaxSpeed = byteValue; break;
+        case AutoSettingId::AcFanAuto: settings.acFanAutoAllowed = value >= 0.5f; break;
+        case AutoSettingId::AcDynamic: settings.acDynamicControlEnabled = value >= 0.5f; break;
+        case AutoSettingId::AcCoolFullDelta: settings.acCoolingFullPowerDeltaC = value; break;
+        case AutoSettingId::AcCoolMinOffset: settings.acCoolingMinTempOffsetC = value; break;
+        case AutoSettingId::AcCoolMaxOffset: settings.acCoolingMaxTempOffsetC = value; break;
+        case AutoSettingId::AcCoolMinTemp: settings.acCoolingMinSetpointC = value; break;
+        case AutoSettingId::AcCoolFanMin: settings.acCoolingMinFanSpeed = byteValue; break;
+        case AutoSettingId::AcCoolFanMax: settings.acCoolingMaxFanSpeed = byteValue; break;
+        case AutoSettingId::AcHeatFullDelta: settings.acHeatingFullPowerDeltaC = value; break;
+        case AutoSettingId::AcHeatMinOffset: settings.acHeatingMinTempOffsetC = value; break;
+        case AutoSettingId::AcHeatMaxOffset: settings.acHeatingMaxTempOffsetC = value; break;
+        case AutoSettingId::AcHeatMaxTemp: settings.acHeatingMaxSetpointC = value; break;
+        case AutoSettingId::AcHeatFanMin: settings.acHeatingMinFanSpeed = byteValue; break;
+        case AutoSettingId::AcHeatFanMax: settings.acHeatingMaxFanSpeed = byteValue; break;
+        case AutoSettingId::DecisionInterval: settings.decisionIntervalMs = msValue; break;
+        case AutoSettingId::MinStateHold: settings.minStateHoldMs = msValue; break;
+        case AutoSettingId::VentCoolCheck: settings.ventCoolingCheckIntervalMs = msValue; break;
+        case AutoSettingId::VentCoolMinDrop: settings.ventCoolingMinDropC = value; break;
+        case AutoSettingId::VentCoolStepUp: settings.ventCoolingStepUpOnFail = value >= 0.5f; break;
+        case AutoSettingId::VentCoolFallback: settings.ventCoolingFallbackToAc = value >= 0.5f; break;
+        case AutoSettingId::SafeNoIndoor: settings.safeOnIndoorSensorMissing = value >= 0.5f; break;
+        case AutoSettingId::SafeEquipment: settings.safeOnCriticalEquipmentError = value >= 0.5f; break;
+        case AutoSettingId::VentCompInterval: settings.ventCompensationUpdateIntervalMs = msValue; break;
+        case AutoSettingId::VentCompOffDelay: settings.ventCompensationOffDelayMs = msValue; break;
+        case AutoSettingId::VentCompUp: settings.ventCompensationImmediateUp = value >= 0.5f; break;
+        case AutoSettingId::VentCompDown: settings.ventCompensationImmediateDown = value >= 0.5f; break;
+    }
+}
+
+String formatAutoSettingValue(const AutoControlSettings& settings, const AutoSettingDescriptor& descriptor) {
+    const float value = getAutoSettingValue(settings, descriptor.id);
+    if (descriptor.type == AutoSettingType::Bool) {
+        return value >= 0.5f ? "ON" : "OFF";
+    }
+    if (descriptor.type == AutoSettingType::UInt || descriptor.type == AutoSettingType::Milliseconds) {
+        return String((unsigned long)roundf(value)) + (descriptor.unit[0] ? String(" ") + descriptor.unit : String(""));
+    }
+    return String(value, static_cast<unsigned int>(descriptor.decimals)) + (descriptor.unit[0] ? String(" ") + descriptor.unit : String(""));
+}
 }
 
 void DisplayUi::begin() {
@@ -68,7 +353,7 @@ void DisplayUi::begin() {
     Logger::info(TAG_DISPLAY, "ST7789 display initialized");
 }
 
-void DisplayUi::update(const DeviceState& state) {
+void DisplayUi::update(const DeviceState& state, const AutoControlSettings& autoSettings) {
     if (!ready) {
         return;
     }
@@ -82,7 +367,7 @@ void DisplayUi::update(const DeviceState& state) {
     lastRenderMs = now;
     dirty = false;
 
-    render(state);
+    render(state, autoSettings);
 }
 
 void DisplayUi::nextPage() {
@@ -126,7 +411,7 @@ const char* DisplayUi::getPageName() const {
     return getPageName(currentPage);
 }
 
-DisplayUi::Action DisplayUi::handleButton(Button button, bool longPress, DeviceState& state) {
+DisplayUi::Action DisplayUi::handleButton(Button button, bool longPress, DeviceState& state, const AutoControlSettings& autoSettings) {
     if (longPress && button == Button::Back) {
         currentPage = Page::Overview;
         interactionMode = InteractionMode::View;
@@ -154,6 +439,8 @@ DisplayUi::Action DisplayUi::handleButton(Button button, bool longPress, DeviceS
             case Button::Ok:
                 if (currentPage == Page::Overview) {
                     enterSelectMode(state);
+                } else if (currentPage == Page::Settings) {
+                    enterAutoSettingsSelect();
                 } else {
                     Logger::debug(TAG_UI, "OK ignored: page has no editable parameters yet");
                 }
@@ -169,6 +456,10 @@ DisplayUi::Action DisplayUi::handleButton(Button button, bool longPress, DeviceS
                 break;
         }
         return {};
+    }
+
+    if (currentPage == Page::Settings) {
+        return handleAutoSettingsButton(button, longPress, autoSettings);
     }
 
     if (longPress) {
@@ -215,7 +506,7 @@ DisplayUi::Action DisplayUi::handleButton(Button button, bool longPress, DeviceS
     return {};
 }
 
-void DisplayUi::render(const DeviceState& state) {
+void DisplayUi::render(const DeviceState& state, const AutoControlSettings& autoSettings) {
     if (fullRedraw) {
         if (shellRedraw) {
             tft.fillScreen(COLOR_BG);
@@ -250,7 +541,7 @@ void DisplayUi::render(const DeviceState& state) {
             drawTemperatures(state.temperatures);
             break;
         case Page::Settings:
-            drawSettings(state);
+            drawSettings(state, autoSettings);
             break;
         case Page::Diagnostics:
             drawDiagnostics(state);
@@ -691,22 +982,128 @@ void DisplayUi::drawVentilation(const DeviceState& state) {
     drawTextBox(3, 20, 154, 275, "Manual VFD page will be expanded later", COLOR_MUTED, 2);
 }
 
-void DisplayUi::drawSettings(const DeviceState& state) {
+void DisplayUi::drawSettings(const DeviceState& state, const AutoControlSettings& autoSettings) {
     if (fullRedraw) {
-        drawPanel(10, 42, 145, 64, state.wifiConnected ? COLOR_OK : COLOR_DANGER);
-        drawPanel(165, 42, 145, 64, state.homeAssistant.connected ? COLOR_OK : COLOR_DANGER);
-        drawPanel(10, 116, 300, 42, COLOR_ACCENT);
-        drawPanel(10, 168, 300, 40, COLOR_MUTED);
+        tft.drawRoundRect(8, 28, 304, 182, 6, COLOR_ACCENT);
+        autoPageCacheValid = false;
     }
 
-    drawTextBox(0, 20, 52, 125, "WI-FI", COLOR_MUTED, 1);
-    drawTextBox(1, 20, 72, 125, state.wifiConnected ? "connected" : "offline", statusColor(state.wifiConnected), 2);
+    (void)state;
+    drawAutoSettingsList(autoSettings);
+}
 
-    drawTextBox(2, 175, 52, 125, "HOME ASSISTANT", COLOR_MUTED, 1);
-    drawTextBox(3, 175, 72, 125, state.homeAssistant.connected ? "MQTT online" : "MQTT offline", statusColor(state.homeAssistant.connected), 2);
+void DisplayUi::drawAutoSettingsList(const AutoControlSettings& autoSettings) {
+    if (selectedAutoSetting >= AUTO_SETTINGS_COUNT) {
+        selectedAutoSetting = AUTO_SETTINGS_COUNT - 1;
+    }
 
-    drawTextBox(4, 20, 126, 275, "IP: " + (state.wifiConnected ? state.ip.toString() : String("none")), COLOR_TEXT, 2);
-    drawTextBox(5, 20, 178, 275, "OTA ready  Uptime " + String(state.uptimeText), COLOR_MUTED, 2);
+    if (selectedAutoSetting < autoSettingsScroll) {
+        autoSettingsScroll = selectedAutoSetting;
+    } else if (selectedAutoSetting >= autoSettingsScroll + AUTO_VISIBLE_ROWS) {
+        autoSettingsScroll = selectedAutoSetting - AUTO_VISIBLE_ROWS + 1;
+    }
+
+    const AutoSettingDescriptor& selected = AUTO_SETTINGS[selectedAutoSetting];
+    const bool editMode = interactionMode == InteractionMode::Edit;
+    const bool rangeChanged = !autoPageCacheValid || lastAutoVisibleStart != autoSettingsScroll;
+    const bool selectionChanged = !autoPageCacheValid || lastAutoSelectedIndex != selectedAutoSetting || lastAutoEditMode != editMode;
+
+    if (!autoPageCacheValid || strncmp(lastAutoGroup, selected.group, sizeof(lastAutoGroup)) != 0) {
+        strncpy(lastAutoGroup, selected.group, sizeof(lastAutoGroup));
+        lastAutoGroup[sizeof(lastAutoGroup) - 1] = '\0';
+        tft.fillRect(14, 32, 292, 18, COLOR_BG);
+        tft.setFreeFont(nullptr);
+        tft.setTextFont(2);
+        tft.setTextSize(1);
+        tft.setTextColor(COLOR_TITLE, COLOR_BG);
+        tft.drawString(selected.group, 18, 32);
+    }
+
+    if (rangeChanged || selectionChanged) {
+        tft.fillRect(258, 32, 48, 18, COLOR_BG);
+        tft.setTextFont(2);
+        tft.setTextColor(COLOR_WARN, COLOR_BG);
+        tft.drawString(String(selectedAutoSetting + 1) + "/" + String(AUTO_SETTINGS_COUNT), 262, 32);
+    }
+
+    for (uint8_t row = 0; row < AUTO_VISIBLE_ROWS; row++) {
+        const uint8_t index = autoSettingsScroll + row;
+        const int16_t y = 52 + row * 18;
+
+        if (index >= AUTO_SETTINGS_COUNT) {
+            if (!autoPageCacheValid || lastAutoRowIndex[row] != 255) {
+                tft.fillRect(12, y - 2, 296, 18, COLOR_BG);
+                lastAutoRowIndex[row] = 255;
+                lastAutoRowValue[row] = "";
+                lastAutoRowSelected[row] = false;
+                lastAutoRowEdit[row] = false;
+            }
+            continue;
+        }
+
+        const AutoSettingDescriptor& descriptor = AUTO_SETTINGS[index];
+        const bool selectedRow = interactionMode != InteractionMode::View && index == selectedAutoSetting;
+        const bool editRow = selectedRow && interactionMode == InteractionMode::Edit;
+        const uint16_t markerColor = editRow ? COLOR_TITLE : (selectedRow ? COLOR_ACCENT : COLOR_MUTED);
+
+        const String value = editRow
+            ? (descriptor.type == AutoSettingType::Bool
+                ? (autoEditValue >= 0.5f ? "ON" : "OFF")
+                : (descriptor.type == AutoSettingType::UInt || descriptor.type == AutoSettingType::Milliseconds
+                    ? String((unsigned long)roundf(autoEditValue)) + (descriptor.unit[0] ? String(" ") + descriptor.unit : String(""))
+                    : String(autoEditValue, static_cast<unsigned int>(descriptor.decimals)) + (descriptor.unit[0] ? String(" ") + descriptor.unit : String(""))))
+            : formatAutoSettingValue(autoSettings, descriptor);
+
+        const bool rowChanged = rangeChanged
+            || !autoPageCacheValid
+            || lastAutoRowIndex[row] != index
+            || lastAutoRowSelected[row] != selectedRow
+            || lastAutoRowEdit[row] != editRow
+            || lastAutoRowValue[row] != value;
+        if (!rowChanged) {
+            continue;
+        }
+
+        lastAutoRowIndex[row] = index;
+        lastAutoRowSelected[row] = selectedRow;
+        lastAutoRowEdit[row] = editRow;
+        lastAutoRowValue[row] = value;
+
+        tft.fillRect(12, y - 2, 296, 18, COLOR_BG);
+
+        if (selectedRow) {
+            tft.drawRect(12, y - 2, 296, 18, markerColor);
+            tft.fillTriangle(18, y + 4, 18, y + 10, 24, y + 7, markerColor);
+        }
+
+        tft.setTextFont(1);
+        tft.setTextColor(markerColor, COLOR_BG);
+        tft.drawString(descriptor.group, 28, y + 2);
+
+        tft.setTextFont(2);
+        tft.setTextColor(selectedRow ? COLOR_TEXT : COLOR_MUTED, COLOR_BG);
+        tft.drawString(descriptor.label, 82, y);
+
+        tft.setTextColor(editRow ? COLOR_TITLE : COLOR_OK, COLOR_BG);
+        tft.drawRightString(value, 302, y, 2);
+    }
+
+    const char* hint = interactionMode == InteractionMode::Edit
+        ? "LEFT/RIGHT change  OK apply  BACK cancel"
+        : (interactionMode == InteractionMode::Select ? "LEFT/RIGHT select  OK edit  BACK exit" : "OK config  BACK overview");
+    if (!autoPageCacheValid || strcmp(lastAutoHint, hint) != 0) {
+        strncpy(lastAutoHint, hint, sizeof(lastAutoHint));
+        lastAutoHint[sizeof(lastAutoHint) - 1] = '\0';
+        tft.fillRect(14, 198, 292, 14, COLOR_BG);
+        tft.setTextFont(1);
+        tft.setTextColor(COLOR_WARN, COLOR_BG);
+        tft.drawString(hint, 18, 201);
+    }
+
+    lastAutoVisibleStart = autoSettingsScroll;
+    lastAutoSelectedIndex = selectedAutoSetting;
+    lastAutoEditMode = editMode;
+    autoPageCacheValid = true;
 }
 
 void DisplayUi::drawDiagnostics(const DeviceState& state) {
@@ -742,7 +1139,7 @@ const char* DisplayUi::getPageName(Page page) const {
         case Page::Temperatures:
             return "Temp";
         case Page::Settings:
-            return "Settings";
+            return "Auto";
         case Page::Diagnostics:
             return "Diag";
         case Page::Count:
@@ -1187,6 +1584,140 @@ DisplayUi::Action DisplayUi::applyEdit(DeviceState& state) {
     interactionMode = InteractionMode::Select;
     dirty = true;
     fullRedraw = true;
+    return action;
+}
+
+DisplayUi::Action DisplayUi::handleAutoSettingsButton(Button button, bool longPress, const AutoControlSettings& autoSettings) {
+    Action action;
+
+    if (interactionMode == InteractionMode::Select) {
+        if (longPress) {
+            return action;
+        }
+
+        switch (button) {
+            case Button::Left:
+                moveAutoSettingsSelection(-1);
+                break;
+            case Button::Right:
+                moveAutoSettingsSelection(1);
+                break;
+            case Button::Ok:
+                enterAutoSettingsEdit(autoSettings);
+                break;
+            case Button::Back:
+                interactionMode = InteractionMode::View;
+                dirty = true;
+                fullRedraw = false;
+                Logger::debug(TAG_UI, "Auto settings selection canceled");
+                break;
+        }
+        return action;
+    }
+
+    if (interactionMode == InteractionMode::Edit) {
+        switch (button) {
+            case Button::Left:
+                changeAutoSettingsValue(-1, longPress);
+                break;
+            case Button::Right:
+                changeAutoSettingsValue(1, longPress);
+                break;
+            case Button::Ok:
+                if (!longPress) {
+                    return applyAutoSettingsEdit(autoSettings);
+                }
+                break;
+            case Button::Back:
+                if (!longPress) {
+                    interactionMode = InteractionMode::Select;
+                    dirty = true;
+                    fullRedraw = false;
+                    Logger::debug(TAG_UI, "Auto setting edit canceled");
+                }
+                break;
+        }
+        return action;
+    }
+
+    return action;
+}
+
+void DisplayUi::enterAutoSettingsSelect() {
+    interactionMode = InteractionMode::Select;
+    dirty = true;
+    fullRedraw = false;
+    Logger::debug(TAG_UI, "CONFIG mode: AUTO SETTINGS");
+}
+
+void DisplayUi::enterAutoSettingsEdit(const AutoControlSettings& autoSettings) {
+    if (selectedAutoSetting >= AUTO_SETTINGS_COUNT) {
+        selectedAutoSetting = 0;
+    }
+
+    const AutoSettingDescriptor& descriptor = AUTO_SETTINGS[selectedAutoSetting];
+    autoEditValue = getAutoSettingValue(autoSettings, descriptor.id);
+    interactionMode = InteractionMode::Edit;
+    dirty = true;
+    fullRedraw = false;
+    Logger::debugf(TAG_UI, "EDIT auto setting: %s", descriptor.label);
+}
+
+void DisplayUi::moveAutoSettingsSelection(int8_t direction) {
+    int16_t next = (int16_t)selectedAutoSetting + direction;
+    if (next < 0) {
+        next = AUTO_SETTINGS_COUNT - 1;
+    } else if (next >= AUTO_SETTINGS_COUNT) {
+        next = 0;
+    }
+
+    selectedAutoSetting = (uint8_t)next;
+    dirty = true;
+    fullRedraw = false;
+    Logger::debugf(TAG_UI, "Selected auto setting: %s", AUTO_SETTINGS[selectedAutoSetting].label);
+}
+
+void DisplayUi::changeAutoSettingsValue(int8_t direction, bool fast) {
+    if (selectedAutoSetting >= AUTO_SETTINGS_COUNT) {
+        return;
+    }
+
+    const AutoSettingDescriptor& descriptor = AUTO_SETTINGS[selectedAutoSetting];
+    if (descriptor.type == AutoSettingType::Bool) {
+        autoEditValue = autoEditValue >= 0.5f ? 0.0f : 1.0f;
+    } else {
+        const float step = fast ? descriptor.fastStep : descriptor.step;
+        autoEditValue = clampAutoValue(autoEditValue + direction * step, descriptor);
+    }
+
+    dirty = true;
+    fullRedraw = false;
+    Logger::debugf(TAG_UI, "Auto setting edit value changed: %s", descriptor.label);
+}
+
+DisplayUi::Action DisplayUi::applyAutoSettingsEdit(const AutoControlSettings& autoSettings) {
+    Action action;
+    if (selectedAutoSetting >= AUTO_SETTINGS_COUNT) {
+        return action;
+    }
+
+    const AutoSettingDescriptor& descriptor = AUTO_SETTINGS[selectedAutoSetting];
+    AutoControlSettings updated = autoSettings;
+    const float oldValue = getAutoSettingValue(updated, descriptor.id);
+    const float newValue = descriptor.type == AutoSettingType::Bool
+        ? (autoEditValue >= 0.5f ? 1.0f : 0.0f)
+        : clampAutoValue(autoEditValue, descriptor);
+
+    if (fabsf(oldValue - newValue) > 0.001f) {
+        setAutoSettingValue(updated, descriptor.id, newValue);
+        action.type = ActionType::AutoSettings;
+        action.autoSettings = updated;
+        Logger::infof(TAG_UI, "Auto setting applied: %s", descriptor.label);
+    }
+
+    interactionMode = InteractionMode::Select;
+    dirty = true;
+    fullRedraw = false;
     return action;
 }
 

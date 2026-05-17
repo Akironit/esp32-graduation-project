@@ -4,6 +4,7 @@
 #include <IPAddress.h>
 #include <TFT_eSPI.h>
 
+#include "AutoControlSettings.h"
 #include "DeviceState.h"
 
 class DisplayUi {
@@ -33,7 +34,8 @@ public:
         AcFan,
         VfdStop,
         VfdForward,
-        VfdSetFrequency
+        VfdSetFrequency,
+        AutoSettings
     };
 
     struct Action {
@@ -42,10 +44,11 @@ public:
         bool boolValue = false;
         uint8_t uintValue = 0;
         float floatValue = 0.0f;
+        AutoControlSettings autoSettings;
     };
 
     void begin();
-    void update(const DeviceState& state);
+    void update(const DeviceState& state, const AutoControlSettings& autoSettings);
 
     void nextPage();
     void previousPage();
@@ -54,7 +57,7 @@ public:
     bool isReady() const;
     uint8_t getPageIndex() const;
     const char* getPageName() const;
-    Action handleButton(Button button, bool longPress, DeviceState& state);
+    Action handleButton(Button button, bool longPress, DeviceState& state, const AutoControlSettings& autoSettings);
 
 private:
     enum class InteractionMode : uint8_t {
@@ -80,6 +83,9 @@ private:
     InteractionMode interactionMode = InteractionMode::View;
     OverviewParam selectedParam = OverviewParam::Mode;
     int16_t editValue = 0;
+    uint8_t selectedAutoSetting = 0;
+    uint8_t autoSettingsScroll = 0;
+    float autoEditValue = 0.0f;
     bool ready = false;
     bool dirty = true;
     bool fullRedraw = true;
@@ -96,10 +102,21 @@ private:
     unsigned long lastRenderMs = 0;
     static constexpr unsigned long RENDER_INTERVAL_MS = 1000;
     static constexpr uint8_t LINE_CACHE_SIZE = 40;
+    static constexpr uint8_t AUTO_VISIBLE_ROWS = 8;
     String lineCache[LINE_CACHE_SIZE];
     uint16_t lineColorCache[LINE_CACHE_SIZE] = {};
+    bool autoPageCacheValid = false;
+    uint8_t lastAutoVisibleStart = 255;
+    uint8_t lastAutoSelectedIndex = 255;
+    bool lastAutoEditMode = false;
+    char lastAutoGroup[16] = "";
+    char lastAutoHint[56] = "";
+    uint8_t lastAutoRowIndex[AUTO_VISIBLE_ROWS] = {};
+    bool lastAutoRowSelected[AUTO_VISIBLE_ROWS] = {};
+    bool lastAutoRowEdit[AUTO_VISIBLE_ROWS] = {};
+    String lastAutoRowValue[AUTO_VISIBLE_ROWS];
 
-    void render(const DeviceState& state);
+    void render(const DeviceState& state, const AutoControlSettings& autoSettings);
 
     void drawHeader(const DeviceState& state, const char* title);
     void drawFooter(const DeviceState& state);
@@ -115,7 +132,7 @@ private:
     void drawTemperatures(const TemperatureStateSnapshot& temperatures);
     void drawAirConditioner(const AcStateSnapshot& ac);
     void drawVentilation(const DeviceState& state);
-    void drawSettings(const DeviceState& state);
+    void drawSettings(const DeviceState& state, const AutoControlSettings& autoSettings);
     void drawDiagnostics(const DeviceState& state);
     void drawPlaceholder(const char* title, const char* line1, const char* line2);
     void drawPanel(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
@@ -131,6 +148,7 @@ private:
     void drawEyeIcon(int16_t x, int16_t y, uint16_t color);
     void drawOverviewSelection(const DeviceState& state);
     void drawParamFrame(OverviewParam param, uint16_t color);
+    void drawAutoSettingsList(const AutoControlSettings& autoSettings);
 
     void enterSelectMode(DeviceState& state);
     void enterEditMode(const DeviceState& state);
@@ -138,6 +156,12 @@ private:
     void moveSelection(const DeviceState& state, int8_t direction);
     void changeEditValue(int8_t direction);
     Action applyEdit(DeviceState& state);
+    Action handleAutoSettingsButton(Button button, bool longPress, const AutoControlSettings& autoSettings);
+    void enterAutoSettingsSelect();
+    void enterAutoSettingsEdit(const AutoControlSettings& autoSettings);
+    void moveAutoSettingsSelection(int8_t direction);
+    void changeAutoSettingsValue(int8_t direction, bool fast);
+    Action applyAutoSettingsEdit(const AutoControlSettings& autoSettings);
     bool isOverviewParamAvailable(const DeviceState& state, OverviewParam param) const;
     OverviewParam firstAvailableOverviewParam(const DeviceState& state) const;
     uint8_t acModeListIndex(uint8_t mode) const;
