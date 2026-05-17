@@ -1081,6 +1081,8 @@ void SerialConsole::printStateStatus() {
     println(state->ac.powerOn ? "ON" : "OFF");
     print("Temp: ");
     println((int)state->ac.temperature);
+    print("Controller temp: ");
+    println((int)state->ac.controllerTemp);
     print("Mode: ");
     println((int)state->ac.mode);
     print("Fan: ");
@@ -2073,8 +2075,10 @@ void SerialConsole::processAutoCommand(const String& cmd) {
         changed = parseOnOff(value, settings.safeOnCriticalEquipmentError);
     } else if (key == "vent-comp-interval") {
         settings.ventCompensationUpdateIntervalMs = value.toInt();
+        changed = true;
     } else if (key == "vent-comp-off-delay") {
         settings.ventCompensationOffDelayMs = value.toInt();
+        changed = true;
     } else if (key == "vent-comp-up") {
         changed = parseOnOff(value, settings.ventCompensationImmediateUp);
     } else if (key == "vent-comp-down") {

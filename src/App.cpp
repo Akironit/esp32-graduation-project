@@ -250,6 +250,7 @@ void App::updateDeviceState() {
     state.ac.bound = hp.isBound();
     state.ac.powerOn = hp.getOnOff();
     state.ac.temperature = hp.getTemp();
+    state.ac.controllerTemp = hp.getControllerTemp();
     state.ac.mode = hp.getMode();
     state.ac.fanMode = hp.getFanMode();
     state.ac.primaryController = hp.isPrimaryController();
@@ -269,6 +270,14 @@ void App::updateDeviceState() {
     }
     state.environment.hasIndoorTemp = tempSensors.getTemperatureByRole(TempSensorRole::Indoor, state.environment.indoorTempC);
     state.environment.hasOutdoorTemp = tempSensors.getTemperatureByRole(TempSensorRole::Outdoor, state.environment.outdoorTempC);
+    if (state.environment.hasIndoorTemp) {
+        const uint8_t indoorControllerTemp = (uint8_t)constrain((int)(state.environment.indoorTempC + 0.5f), 0, 63);
+        hp.setControllerTempOverride(true, indoorControllerTemp);
+        state.ac.controllerTemp = indoorControllerTemp;
+    } else {
+        hp.setControllerTempOverride(false, 0);
+        state.ac.controllerTemp = hp.getControllerTemp();
+    }
 
     state.vfd.initialized = vfd.isInitialized();
     state.vfd.online = vfd.isOnline();

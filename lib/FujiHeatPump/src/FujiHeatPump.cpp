@@ -71,6 +71,15 @@ void FujiHeatPump::encodeFrame(FujiFrame ff){
 
 }
 
+void FujiHeatPump::applyControllerTempOverride(FujiFrame& ff) {
+    if (!controllerTempOverrideEnabled) {
+        return;
+    }
+
+    ff.controllerTemp = controllerTempOverride;
+    currentState.controllerTemp = controllerTempOverride;
+}
+
 void FujiHeatPump::connect(HardwareSerial *serial, bool secondary){
     return this->connect(serial, secondary, -1, -1);
 }
@@ -287,6 +296,8 @@ bool FujiHeatPump::waitForFrame() {
                 if(updateFields & kEconomyModeUpdateMask) {
                     ff.economyMode = updateState.economyMode;
                 }
+
+                applyControllerTempOverride(ff);
                 
                 memcpy(&currentState, &ff, sizeof(FujiFrame));
 
@@ -328,6 +339,8 @@ bool FujiHeatPump::waitForFrame() {
                     ff.swingStep         = 0;
                     ff.acError           = 0;
                 }
+
+                applyControllerTempOverride(ff);
             } else if(ff.messageType == static_cast<byte>(FujiMessageType::ERROR)) {
                 Print& output = getDebugOutput();
                 output.print("AC ERROR RECV: ");
@@ -353,7 +366,9 @@ bool FujiHeatPump::waitForFrame() {
 
         } else if (ff.messageDest == static_cast<byte>(FujiAddress::SECONDARY)) {
             seenSecondaryController = true;
-            currentState.controllerTemp = ff.controllerTemp; // we dont have a temp sensor, use the temp reading from the secondary controller
+            if (!controllerTempOverrideEnabled) {
+                currentState.controllerTemp = ff.controllerTemp;
+            }
         }
         
         return true;
@@ -459,6 +474,17 @@ void FujiHeatPump::setControllerRole(bool primary) {
     pendingFrame = false;
 }
 
+void FujiHeatPump::setControllerTempOverride(bool enabled, byte temperature) {
+    controllerTempOverrideEnabled = enabled;
+
+    if (!enabled) {
+        return;
+    }
+
+    controllerTempOverride = constrain(temperature, (byte)0, (byte)63);
+    currentState.controllerTemp = controllerTempOverride;
+}
+
 bool FujiHeatPump::getOnOff(){
     return currentState.onOff == 1 ? true : false;
 }
@@ -496,4 +522,3 @@ byte FujiHeatPump::getUpdateFields(){
     return updateFields;
 }
  
-

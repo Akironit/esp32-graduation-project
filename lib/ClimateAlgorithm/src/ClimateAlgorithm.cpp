@@ -544,7 +544,28 @@ void ClimateAlgorithm::updateVentRequirements(ControllerActivity activity) {
     status.baseVentRequirementStep = settings.autoVentAlwaysOn ? settings.autoVentDefaultStep : 0;
     status.bathCompStep = status.bathExhaustOn ? settings.bathExhaustCompStep : 0;
     status.hoodCompStep = hoodCompensationStep(status.hoodLevel);
-    status.exhaustCompRequirementStep = clampStep(status.bathCompStep + status.hoodCompStep);
+    const uint8_t rawExhaustCompStep = clampStep(status.bathCompStep + status.hoodCompStep);
+    const unsigned long now = millis();
+
+    if (rawExhaustCompStep >= heldExhaustCompRequirementStep || settings.ventCompensationImmediateDown) {
+        heldExhaustCompRequirementStep = rawExhaustCompStep;
+        exhaustCompDecreasePending = false;
+    } else if (settings.ventCompensationOffDelayMs == 0) {
+        heldExhaustCompRequirementStep = rawExhaustCompStep;
+        exhaustCompDecreasePending = false;
+    } else {
+        if (!exhaustCompDecreasePending) {
+            exhaustCompDecreasePending = true;
+            exhaustCompDecreaseStartedMs = now;
+        }
+
+        if (now - exhaustCompDecreaseStartedMs >= settings.ventCompensationOffDelayMs) {
+            heldExhaustCompRequirementStep = rawExhaustCompStep;
+            exhaustCompDecreasePending = false;
+        }
+    }
+
+    status.exhaustCompRequirementStep = heldExhaustCompRequirementStep;
     status.coolingVentRequirementStep = activity == ControllerActivity::VentCool
         ? max(settings.autoVentCoolingStep, ventCoolingCurrentStep)
         : 0;

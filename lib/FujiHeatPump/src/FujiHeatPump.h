@@ -92,9 +92,12 @@ class FujiHeatPump {
     byte            updateFields;
     FujiFrame       updateState;
     FujiFrame       currentState;
+    bool            controllerTempOverrideEnabled = false;
+    byte            controllerTempOverride = 16;
 
     FujiFrame decodeFrame();
     void encodeFrame(FujiFrame ff);
+    void applyControllerTempOverride(FujiFrame& ff);
     bool readNextFrame();
     bool isKnownAddress(byte address);
     bool isPlausibleFrame(byte buf[8]);
@@ -128,6 +131,7 @@ class FujiHeatPump {
     void setDebug(bool isOn);
     void setDebugOutput(Print* output);
     void setControllerRole(bool primary);
+    void setControllerTempOverride(bool enabled, byte temperature);
     
     bool getOnOff();
     byte getTemp();

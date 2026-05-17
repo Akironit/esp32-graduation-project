@@ -83,6 +83,7 @@ private:
     bool ready = false;
     bool dirty = true;
     bool fullRedraw = true;
+    bool shellRedraw = true;
     bool lastHeaderWifiConnected = false;
     bool lastHeaderHaConnected = false;
     bool headerStatusCached = false;

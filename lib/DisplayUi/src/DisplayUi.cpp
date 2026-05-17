@@ -63,6 +63,7 @@ void DisplayUi::begin() {
     ready = true;
     dirty = true;
     fullRedraw = true;
+    shellRedraw = true;
 
     Logger::info(TAG_DISPLAY, "ST7789 display initialized");
 }
@@ -89,6 +90,7 @@ void DisplayUi::nextPage() {
     currentPage = static_cast<Page>(next);
     dirty = true;
     fullRedraw = true;
+    shellRedraw = true;
 }
 
 void DisplayUi::previousPage() {
@@ -97,6 +99,7 @@ void DisplayUi::previousPage() {
     currentPage = static_cast<Page>(previous);
     dirty = true;
     fullRedraw = true;
+    shellRedraw = true;
 }
 
 void DisplayUi::setPage(Page page) {
@@ -108,6 +111,7 @@ void DisplayUi::setPage(Page page) {
     interactionMode = InteractionMode::View;
     dirty = true;
     fullRedraw = true;
+    shellRedraw = true;
 }
 
 bool DisplayUi::isReady() const {
@@ -128,6 +132,7 @@ DisplayUi::Action DisplayUi::handleButton(Button button, bool longPress, DeviceS
         interactionMode = InteractionMode::View;
         dirty = true;
         fullRedraw = true;
+        shellRedraw = true;
         Logger::debug(TAG_UI, "Long BACK: return to Overview");
         return {};
     }
@@ -158,6 +163,7 @@ DisplayUi::Action DisplayUi::handleButton(Button button, bool longPress, DeviceS
                     currentPage = Page::Overview;
                     dirty = true;
                     fullRedraw = true;
+                    shellRedraw = true;
                     Logger::debug(TAG_UI, "BACK: return to Overview");
                 }
                 break;
@@ -211,14 +217,20 @@ DisplayUi::Action DisplayUi::handleButton(Button button, bool longPress, DeviceS
 
 void DisplayUi::render(const DeviceState& state) {
     if (fullRedraw) {
-        tft.fillScreen(COLOR_BG);
+        if (shellRedraw) {
+            tft.fillScreen(COLOR_BG);
+        } else {
+            tft.fillRect(0, HEADER_H + 1, 320, FOOTER_Y - HEADER_H - 1, COLOR_BG);
+        }
         resetLineCache();
-        headerStatusCached = false;
-        lastInteractionLabel = nullptr;
-        lastFooterText[0] = '\0';
-        lastUptimeText[0] = '\0';
-        lastWarningCount = 255;
-        lastErrorCount = 255;
+        if (shellRedraw) {
+            headerStatusCached = false;
+            lastInteractionLabel = nullptr;
+            lastFooterText[0] = '\0';
+            lastUptimeText[0] = '\0';
+            lastWarningCount = 255;
+            lastErrorCount = 255;
+        }
     }
 
     drawHeader(state, getPageName());
@@ -248,10 +260,11 @@ void DisplayUi::render(const DeviceState& state) {
     }
 
     fullRedraw = false;
+    shellRedraw = false;
 }
 
 void DisplayUi::drawHeader(const DeviceState& state, const char* title) {
-    if (fullRedraw) {
+    if (shellRedraw) {
         tft.fillRect(0, 0, 320, HEADER_H, COLOR_PANEL);
         String headerTitle(title);
         headerTitle.toUpperCase();
@@ -263,7 +276,7 @@ void DisplayUi::drawHeader(const DeviceState& state, const char* title) {
 
     const char* label = interactionLabel();
     const bool editLabel = interactionMode == InteractionMode::Edit;
-    if (fullRedraw || label != lastInteractionLabel || editLabel != lastInteractionEdit) {
+    if (shellRedraw || label != lastInteractionLabel || editLabel != lastInteractionEdit) {
         lastInteractionLabel = label;
         lastInteractionEdit = editLabel;
         tft.fillRect(174, 1, 74, 18, COLOR_PANEL);
@@ -274,12 +287,12 @@ void DisplayUi::drawHeader(const DeviceState& state, const char* title) {
         }
     }
 
-    if (fullRedraw || !headerStatusCached || state.wifiConnected != lastHeaderWifiConnected) {
+    if (shellRedraw || !headerStatusCached || state.wifiConnected != lastHeaderWifiConnected) {
         lastHeaderWifiConnected = state.wifiConnected;
         drawWifiIcon(268, 10, state.wifiConnected ? COLOR_OK : COLOR_DANGER);
     }
 
-    if (fullRedraw || !headerStatusCached || state.homeAssistant.connected != lastHeaderHaConnected) {
+    if (shellRedraw || !headerStatusCached || state.homeAssistant.connected != lastHeaderHaConnected) {
         lastHeaderHaConnected = state.homeAssistant.connected;
         drawHomeAssistantIcon(304, 10, state.homeAssistant.connected ? COLOR_OK : COLOR_DANGER);
     }
@@ -297,7 +310,7 @@ void DisplayUi::drawFooter(const DeviceState& state) {
         static_cast<uint8_t>(Page::Count)
     );
 
-    if (fullRedraw) {
+    if (shellRedraw) {
         tft.fillRect(0, FOOTER_Y, 320, FOOTER_H, COLOR_PANEL);
     }
 
@@ -514,7 +527,7 @@ void DisplayUi::drawOverview(const DeviceState& state) {
     drawFontTextBox(4, 168, 32, 44, 16, "Hood", 2, COLOR_ACCENT);
     drawFreeTextBox(5, 214, 34, 20, 16, String(state.environment.kitchenHoodLevel), valueFont, state.environment.kitchenHoodLevel > 0 ? COLOR_OK : COLOR_TEXT);
     drawFontTextBox(6, 250, 32, 34, 16, "EXH", 2, COLOR_ACCENT);
-    drawFreeTextBox(7, 286, 34, 30, 16, state.environment.exhaustVentEnabled ? "ON " : "OFF", valueFont, state.environment.exhaustVentEnabled ? COLOR_OK : COLOR_MUTED);
+    drawFreeTextBox(7, 286, 34, 34, 16, state.environment.exhaustVentEnabled ? "ON  " : "OFF ", valueFont, state.environment.exhaustVentEnabled ? COLOR_OK : COLOR_MUTED);
     drawFreeTextBox(8, 168, 54, 132, 18, "Temperature", labelFont, COLOR_MUTED);
 
     const String indoorText = state.environment.hasIndoorTemp ? formatFloat(state.environment.indoorTempC, 1) + "C" : "--.-C";

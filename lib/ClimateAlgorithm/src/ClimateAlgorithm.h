@@ -168,6 +168,9 @@ private:
     bool hasAppliedVfd = false;
     unsigned long lastAcCommandMs = 0;
     unsigned long lastVfdCommandMs = 0;
+    uint8_t heldExhaustCompRequirementStep = 0;
+    bool exhaustCompDecreasePending = false;
+    unsigned long exhaustCompDecreaseStartedMs = 0;
 
     void refreshInputs();
     ControllerActivity calculateActivity();

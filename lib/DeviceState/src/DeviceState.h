@@ -9,6 +9,7 @@ struct AcStateSnapshot {
     bool bound = false;
     bool powerOn = false;
     uint8_t temperature = 0;
+    uint8_t controllerTemp = 0;
     uint8_t mode = 0;
     uint8_t fanMode = 0;
     bool primaryController = false;
