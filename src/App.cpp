@@ -37,7 +37,7 @@ void App::begin() {
     }
 
     homeAssistant.begin(
-        MQTT_ENABLED,
+        state.settings.mqttEnabled,
         MQTT_HOST,
         MQTT_PORT,
         MQTT_USER,
@@ -79,6 +79,12 @@ void App::update() {
 
     console.update();
     updateHeatPump();
+
+    if (state.settings.mqttEnabled != lastMqttEnabled) {
+        lastMqttEnabled = state.settings.mqttEnabled;
+        homeAssistant.setEnabled(state.settings.mqttEnabled);
+        scheduleUserSettingsSave();
+    }
 
     updateIoExpanderInputs();
     updateHeatPump();
@@ -643,6 +649,8 @@ void App::loadUserSettings() {
     state.settings.mode = mode == static_cast<uint8_t>(DeviceMode::Manual)
         ? DeviceMode::Manual
         : (mode == static_cast<uint8_t>(DeviceMode::Disabled) ? DeviceMode::Disabled : DeviceMode::Auto);
+    state.settings.mqttEnabled = preferences.getBool("mqttEnabled", MQTT_ENABLED);
+    lastMqttEnabled = state.settings.mqttEnabled;
     state.settings.targetIndoorTempC = constrain(targetTemp, 16.0f, 30.0f);
     state.settings.manualAcPower = preferences.getBool("acPower", state.settings.manualAcPower);
     state.settings.manualAcMode = preferences.getUChar("acMode", state.settings.manualAcMode);
@@ -717,6 +725,7 @@ void App::saveUserSettings() {
     }
 
     preferences.putUChar("mode", static_cast<uint8_t>(state.settings.mode));
+    preferences.putBool("mqttEnabled", state.settings.mqttEnabled);
     preferences.putFloat("setTemp", state.settings.targetIndoorTempC);
     preferences.putBool("acPower", state.settings.manualAcPower);
     preferences.putUChar("acMode", state.settings.manualAcMode);
@@ -752,21 +761,26 @@ void App::updateModeTransition() {
         return;
     }
 
+    const DeviceMode previousMode = lastControllerMode;
+
     Logger::infof(
         TAG_SETTINGS,
         "Device mode changed: %u -> %u",
-        static_cast<unsigned int>(lastControllerMode),
+        static_cast<unsigned int>(previousMode),
         static_cast<unsigned int>(currentMode)
     );
 
     lastControllerMode = currentMode;
 
-    if (currentMode == DeviceMode::Auto || currentMode == DeviceMode::Manual || currentMode == DeviceMode::Disabled) {
+    const bool autoRecoveredFromSafe = previousMode == DeviceMode::Safe && currentMode == DeviceMode::Auto;
+    if (!autoRecoveredFromSafe && (currentMode == DeviceMode::Auto || currentMode == DeviceMode::Manual || currentMode == DeviceMode::Disabled)) {
         state.settings.mode = currentMode;
         scheduleUserSettingsSave();
     }
 
-    if (currentMode == DeviceMode::Manual) {
+    if (currentMode == DeviceMode::Auto) {
+        state.controllerState.activity = ControllerActivity::Normal;
+    } else if (currentMode == DeviceMode::Manual) {
         state.controllerState.activity = ControllerActivity::Hold;
         applyManualSettingsProfile("entered manual mode");
     } else if (currentMode == DeviceMode::Disabled) {

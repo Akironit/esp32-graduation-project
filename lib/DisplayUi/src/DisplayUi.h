@@ -96,6 +96,7 @@ private:
     static constexpr unsigned long RENDER_INTERVAL_MS = 1000;
     static constexpr uint8_t LINE_CACHE_SIZE = 40;
     String lineCache[LINE_CACHE_SIZE];
+    uint16_t lineColorCache[LINE_CACHE_SIZE] = {};
 
     void render(const DeviceState& state);
 

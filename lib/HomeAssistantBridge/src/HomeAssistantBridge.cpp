@@ -32,16 +32,16 @@ void HomeAssistantBridge::begin(
     this->state = state;
     this->controller = controller;
 
-    if (!enabled) {
-        Logger::info(TAG_HA, "MQTT bridge disabled");
-        return;
-    }
-
     activeInstance = this;
     mqttClient.setServer(host, port);
     mqttClient.setCallback(&HomeAssistantBridge::handleMqttMessage);
     mqttClient.setSocketTimeout(HA_MQTT_SOCKET_TIMEOUT_SECONDS);
     mqttClient.setKeepAlive(15);
+
+    if (!enabled) {
+        Logger::info(TAG_HA, "MQTT bridge disabled");
+        return;
+    }
 
     Logger::infof(TAG_HA, "MQTT bridge configured for %s:%u", host, port);
 }
@@ -74,6 +74,30 @@ void HomeAssistantBridge::update(bool networkConnected) {
         lastPublishMs = now;
         publishState();
     }
+}
+
+void HomeAssistantBridge::setEnabled(bool enabled) {
+    if (this->enabled == enabled) {
+        return;
+    }
+
+    this->enabled = enabled;
+    reconnectAttempted = false;
+    reconnectIntervalMs = RECONNECT_INTERVAL_MS;
+    reconnectFailureCount = 0;
+    lastReconnectAttemptMs = 0;
+
+    if (!enabled) {
+        if (mqttClient.connected()) {
+            publishAvailability(false);
+            mqttClient.disconnect();
+        }
+        Logger::info(TAG_HA, "MQTT bridge disabled at runtime");
+        return;
+    }
+
+    discoveryPublished = false;
+    Logger::info(TAG_HA, "MQTT bridge enabled at runtime");
 }
 
 bool HomeAssistantBridge::isEnabled() const {

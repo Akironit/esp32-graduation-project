@@ -109,12 +109,15 @@ struct EnvironmentStateSnapshot {
     float outdoorTempC = DEVICE_DISCONNECTED_C;
     float targetIndoorTempC = 22.0f;
     float targetToleranceC = 1.0f;
+    float coolingStartDeltaC = 0.7f;
+    float heatingStartDeltaC = 0.7f;
     uint8_t kitchenHoodLevel = 0;
     bool exhaustVentEnabled = false;
 };
 
 struct UserSettingsSnapshot {
     DeviceMode mode = DeviceMode::Auto;
+    bool mqttEnabled = true;
     float targetIndoorTempC = 22.0f;
     bool manualAcPower = false;
     uint8_t manualAcMode = 5;

@@ -824,6 +824,11 @@ void SerialConsole::processStateCommand(const String& cmd) {
     String args = cmd;
     args.trim();
 
+    if (state == nullptr) {
+        println("[STATE] DeviceState is not connected to console");
+        return;
+    }
+
     if (args == "status") {
         printStateStatus();
         return;
@@ -831,6 +836,27 @@ void SerialConsole::processStateCommand(const String& cmd) {
 
     if (args == "help") {
         printStateHelp();
+        return;
+    }
+
+    if (args.startsWith("mqtt ")) {
+        String value = args.substring(5);
+        value.trim();
+        value.toLowerCase();
+
+        if (value == "on" || value == "1" || value == "true" || value == "yes") {
+            state->settings.mqttEnabled = true;
+            println("[STATE] MQTT enabled");
+            return;
+        }
+
+        if (value == "off" || value == "0" || value == "false" || value == "no") {
+            state->settings.mqttEnabled = false;
+            println("[STATE] MQTT disabled");
+            return;
+        }
+
+        println("[STATE] MQTT value must be on/off");
         return;
     }
 
@@ -1152,6 +1178,8 @@ void SerialConsole::printStateStatus() {
     println();
 
     println("[HOME ASSISTANT]");
+    print("MQTT setting: ");
+    println(state->settings.mqttEnabled ? "ON" : "OFF");
     print("MQTT enabled: ");
     println(state->homeAssistant.enabled ? "YES" : "NO");
     print("MQTT connected: ");
@@ -1439,6 +1467,7 @@ void SerialConsole::printStateHelp() {
     println("--- STATE commands ---");
     println("state");
     println("state status");
+    println("state mqtt on/off");
     println("state help");
     println("----------------------");
     println();

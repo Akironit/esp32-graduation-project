@@ -340,6 +340,7 @@ void DisplayUi::drawFooter(const DeviceState& state) {
 void DisplayUi::resetLineCache() {
     for (uint8_t i = 0; i < LINE_CACHE_SIZE; i++) {
         lineCache[i] = "";
+        lineColorCache[i] = 0;
     }
 }
 
@@ -352,12 +353,13 @@ void DisplayUi::drawTextBox(uint8_t slot, int16_t x, int16_t y, int16_t w, const
         return;
     }
 
-    if (slot < LINE_CACHE_SIZE && lineCache[slot] == text) {
+    if (slot < LINE_CACHE_SIZE && lineCache[slot] == text && lineColorCache[slot] == color) {
         return;
     }
 
     if (slot < LINE_CACHE_SIZE) {
         lineCache[slot] = text;
+        lineColorCache[slot] = color;
     }
 
     const int16_t lineHeight = font >= 4 ? 30 : (font == 1 ? 14 : 22);
@@ -377,12 +379,13 @@ void DisplayUi::drawLabel(uint8_t slot, int16_t x, int16_t y, int16_t w, const S
         return;
     }
 
-    if (slot < LINE_CACHE_SIZE && lineCache[slot] == text) {
+    if (slot < LINE_CACHE_SIZE && lineCache[slot] == text && lineColorCache[slot] == COLOR_ACCENT) {
         return;
     }
 
     if (slot < LINE_CACHE_SIZE) {
         lineCache[slot] = text;
+        lineColorCache[slot] = COLOR_ACCENT;
     }
 
     tft.fillRect(x, y, w, 14, COLOR_BG);
@@ -398,12 +401,13 @@ void DisplayUi::drawFreeTextBox(uint8_t slot, int16_t x, int16_t y, int16_t w, i
         return;
     }
 
-    if (slot < LINE_CACHE_SIZE && lineCache[slot] == text) {
+    if (slot < LINE_CACHE_SIZE && lineCache[slot] == text && lineColorCache[slot] == color) {
         return;
     }
 
     if (slot < LINE_CACHE_SIZE) {
         lineCache[slot] = text;
+        lineColorCache[slot] = color;
     }
 
     tft.fillRect(x, y, w, h, COLOR_BG);
@@ -417,12 +421,13 @@ void DisplayUi::drawFontTextBox(uint8_t slot, int16_t x, int16_t y, int16_t w, i
         return;
     }
 
-    if (slot < LINE_CACHE_SIZE && lineCache[slot] == text) {
+    if (slot < LINE_CACHE_SIZE && lineCache[slot] == text && lineColorCache[slot] == color) {
         return;
     }
 
     if (slot < LINE_CACHE_SIZE) {
         lineCache[slot] = text;
+        lineColorCache[slot] = color;
     }
 
     tft.fillRect(x, y, w, h, COLOR_BG);
@@ -517,10 +522,12 @@ void DisplayUi::drawOverview(const DeviceState& state) {
     const float delta = state.environment.hasIndoorTemp
         ? state.environment.indoorTempC - shownSetTemp
         : 0.0f;
-    const float deltaAbs = delta < 0.0f ? -delta : delta;
     const String deltaText = state.environment.hasIndoorTemp
         ? String(delta >= 0.0f ? "+" : "") + String(delta, 1) + "C"
         : String("--.-C");
+    const bool deltaInNeutralZone = state.environment.hasIndoorTemp
+        && delta < state.environment.coolingStartDeltaC
+        && delta > -state.environment.heatingStartDeltaC;
 
     drawFontTextBox(9, 168, 76, 22, 16, "In", 2, COLOR_ACCENT);
     drawFontTextBox(10, 190, 76, 52, 16, indoorText, 2, state.environment.hasIndoorTemp ? COLOR_TEXT : COLOR_WARN);
@@ -529,7 +536,7 @@ void DisplayUi::drawOverview(const DeviceState& state) {
     drawFontTextBox(13, 168, 96, 28, 16, "Set", 2, COLOR_ACCENT);
     drawFontTextBox(14, 198, 96, 50, 16, String(shownSetTemp, 1) + "C", 2, COLOR_TEXT);
     drawFontTextBox(15, 250, 96, 32, 16, "Dlt", 2, COLOR_ACCENT);
-    drawFontTextBox(16, 282, 96, 34, 16, deltaText, 2, deltaAbs <= state.environment.targetToleranceC ? COLOR_OK : COLOR_WARN);
+    drawFontTextBox(16, 282, 96, 34, 16, deltaText, 2, deltaInNeutralZone ? COLOR_OK : COLOR_WARN);
 
     const char* acLink = "Wait";
     uint16_t acLinkColor = COLOR_WARN;

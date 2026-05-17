@@ -62,6 +62,7 @@ public:
     );
 
     void update(bool networkConnected);
+    void setEnabled(bool enabled);
 
     bool isEnabled() const;
     bool isConnected();

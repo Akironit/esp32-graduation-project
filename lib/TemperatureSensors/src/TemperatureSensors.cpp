@@ -30,17 +30,18 @@ void TemperatureSensors::update() {
 
     const unsigned long now = millis();
 
-    if (now - lastRescanMs >= DS18B20_RESCAN_INTERVAL_MS) {
-        lastRescanMs = now;
-        scanBus();
-    }
-
     if (conversionPending) {
         if (now - conversionStartMs >= conversionDelayMs) {
             readTemperatures();
         }
 
         return;
+    }
+
+    if (rescanRequested || now - lastRescanMs >= DS18B20_RESCAN_INTERVAL_MS) {
+        rescanRequested = false;
+        lastRescanMs = now;
+        scanBus();
     }
 
     if (now - lastUpdateMs >= updateIntervalMs) {
@@ -54,6 +55,10 @@ void TemperatureSensors::forceRead() {
         return;
     }
 
+    if (conversionPending) {
+        return;
+    }
+
     requestTemperatureConversion();
 }
 
@@ -64,6 +69,11 @@ void TemperatureSensors::rescan() {
 
     sensors->begin();
     sensors->setWaitForConversion(false);
+    if (conversionPending) {
+        rescanRequested = true;
+        return;
+    }
+
     scanBus();
     requestTemperatureConversion();
 }
@@ -271,10 +281,7 @@ void TemperatureSensors::scanBus() {
         return;
     }
 
-    for (uint8_t i = 0; i < entryCount; i++) {
-        entries[i].connected = false;
-        entries[i].hasTemperature = false;
-    }
+    bool seen[TEMP_MAX_SENSORS] = {};
 
     const uint8_t busCount = min(sensors->getDeviceCount(), (uint8_t)TEMP_MAX_SENSORS);
     bool registryChanged = false;
@@ -287,11 +294,35 @@ void TemperatureSensors::scanBus() {
 
         const int index = findEntryByAddress(address);
         if (index >= 0) {
+            seen[index] = true;
             entries[index].connected = true;
+            entries[index].missedScanCount = 0;
             entries[index].lastSeenMs = millis();
         } else if (addEntry(address, true)) {
             registryChanged = true;
         }
+    }
+
+    for (uint8_t i = 0; i < entryCount; i++) {
+        if (seen[i]) {
+            continue;
+        }
+
+        if (entries[i].connected && entries[i].missedScanCount < DS18B20_SCAN_MISS_LIMIT) {
+            entries[i].missedScanCount++;
+            Logger::tracef(
+                TAG_TEMP,
+                "DS18B20 sensor %u missed scan %u/%u, keeping last value",
+                i + 1,
+                entries[i].missedScanCount,
+                DS18B20_SCAN_MISS_LIMIT
+            );
+            continue;
+        }
+
+        entries[i].connected = false;
+        entries[i].hasTemperature = false;
+        entries[i].temperatureC = DEVICE_DISCONNECTED_C;
     }
 
     if (registryChanged) {
@@ -324,6 +355,8 @@ bool TemperatureSensors::addEntry(const DeviceAddress& address, bool connected) 
     entries[entryCount].hasTemperature = false;
     entries[entryCount].temperatureC = DEVICE_DISCONNECTED_C;
     entries[entryCount].lastSeenMs = connected ? millis() : 0;
+    entries[entryCount].missedScanCount = 0;
+    entries[entryCount].failedReadCount = 0;
     entryCount++;
     Logger::infof(TAG_TEMP, "New DS18B20 sensor registered as Unknown: %u", entryCount);
     return true;
@@ -368,15 +401,34 @@ void TemperatureSensors::readTemperatures() {
         if (!entries[i].connected || !entries[i].enabled) {
             entries[i].hasTemperature = false;
             entries[i].temperatureC = DEVICE_DISCONNECTED_C;
+            entries[i].failedReadCount = 0;
             continue;
         }
 
         const float temperature = sensors->getTempC(entries[i].address);
-        entries[i].hasTemperature = temperature != DEVICE_DISCONNECTED_C;
-        entries[i].temperatureC = temperature;
-        if (entries[i].hasTemperature) {
+        if (temperature != DEVICE_DISCONNECTED_C) {
+            entries[i].hasTemperature = true;
+            entries[i].temperatureC = temperature;
+            entries[i].failedReadCount = 0;
+            entries[i].missedScanCount = 0;
             entries[i].lastSeenMs = millis();
+            continue;
         }
+
+        if (entries[i].hasTemperature && entries[i].failedReadCount < DS18B20_READ_FAIL_LIMIT) {
+            entries[i].failedReadCount++;
+            Logger::tracef(
+                TAG_TEMP,
+                "DS18B20 sensor %u read failed %u/%u, keeping last value",
+                i + 1,
+                entries[i].failedReadCount,
+                DS18B20_READ_FAIL_LIMIT
+            );
+            continue;
+        }
+
+        entries[i].hasTemperature = false;
+        entries[i].temperatureC = DEVICE_DISCONNECTED_C;
     }
 
     conversionPending = false;
@@ -384,6 +436,10 @@ void TemperatureSensors::readTemperatures() {
 
 void TemperatureSensors::requestTemperatureConversion() {
     if (sensors == nullptr) {
+        return;
+    }
+
+    if (conversionPending) {
         return;
     }
 

@@ -112,6 +112,7 @@ private:
     unsigned long lastSettingsChangeMs = 0;
     bool modeTransitionInitialized = false;
     DeviceMode lastControllerMode = DeviceMode::Auto;
+    bool lastMqttEnabled = MQTT_ENABLED;
     bool lastLoggedVfdDesiredPower = false;
     uint8_t lastLoggedVfdDesiredStep = 255;
     bool lastLoggedVfdRunning = false;

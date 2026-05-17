@@ -165,6 +165,8 @@ void ClimateAlgorithm::setSettings(const AutoControlSettings& newSettings, bool 
 
     if (state != nullptr) {
         state->environment.targetIndoorTempC = settings.targetTempC;
+        state->environment.coolingStartDeltaC = settings.coolingStartDeltaC;
+        state->environment.heatingStartDeltaC = settings.heatingStartDeltaC;
         state->settings.targetIndoorTempC = settings.targetTempC;
     }
 
@@ -399,8 +401,8 @@ void ClimateAlgorithm::refreshInputs() {
     status.outdoorTempValid = outdoorTemperatureValid();
     status.targetTempC = settings.targetTempC;
     status.deltaTempC = status.indoorTempValid ? status.indoorTempC - settings.targetTempC : 0.0f;
-    status.needCooling = status.indoorTempValid && status.deltaTempC >= settings.coolingStartDeltaC;
-    status.needHeating = status.indoorTempValid && status.deltaTempC <= -settings.heatingStartDeltaC;
+    status.needCooling = status.indoorTempValid && status.deltaTempC > settings.coolingStartDeltaC;
+    status.needHeating = status.indoorTempValid && status.deltaTempC < -settings.heatingStartDeltaC;
     status.bathExhaustOn = state->environment.exhaustVentEnabled;
     status.hoodLevel = state->environment.kitchenHoodLevel;
     status.vfdOnline = state->vfd.initialized && !state->vfd.communicationError;
@@ -490,7 +492,7 @@ ControllerActivity ClimateAlgorithm::calculateActivity() {
     }
 
     setReason(settings.keepAcFanOnInAuto ? "Temperature is inside neutral zone, AC fan keeps air circulation" : "Temperature is inside neutral zone");
-    return hasDecision && currentActivity != ControllerActivity::Idle ? ControllerActivity::Hold : ControllerActivity::Normal;
+    return ControllerActivity::Normal;
 }
 
 ControllerActivity ClimateAlgorithm::applyStateHold(ControllerActivity requested) {
@@ -852,7 +854,7 @@ void ClimateAlgorithm::updateSafeRecovery() {
     currentActivity = ControllerActivity::Idle;
     stateEnteredMs = now;
     state->controllerState.mode = DeviceMode::Auto;
-    state->controllerState.activity = ControllerActivity::Idle;
+    state->controllerState.activity = ControllerActivity::Normal;
     setReason("Safe retry succeeded: input data recovered, returning to Auto");
     Logger::info(TAG_AUTO, status.reason);
 }

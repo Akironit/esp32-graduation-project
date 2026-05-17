@@ -9,6 +9,8 @@
 #define TEMP_MAX_SENSORS 8
 #define UPDATE_INTERVAL_MS 2000
 #define DS18B20_RESCAN_INTERVAL_MS 180000UL
+#define DS18B20_SCAN_MISS_LIMIT 3
+#define DS18B20_READ_FAIL_LIMIT 3
 
 enum class TempSensorRole : uint8_t {
     Unknown = 0,
@@ -25,6 +27,8 @@ struct TempSensorEntry {
     bool hasTemperature = false;
     float temperatureC = DEVICE_DISCONNECTED_C;
     unsigned long lastSeenMs = 0;
+    uint8_t missedScanCount = 0;
+    uint8_t failedReadCount = 0;
 };
 
 class TemperatureSensors {
@@ -60,6 +64,7 @@ private:
     unsigned long lastRescanMs = 0;
     const unsigned long updateIntervalMs = UPDATE_INTERVAL_MS;
     bool conversionPending = false;
+    bool rescanRequested = false;
     unsigned long conversionStartMs = 0;
     const unsigned long conversionDelayMs = 750;
 
