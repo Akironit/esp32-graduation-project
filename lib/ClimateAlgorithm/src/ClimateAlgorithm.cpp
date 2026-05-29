@@ -521,6 +521,11 @@ ControllerActivity ClimateAlgorithm::calculateActivity() {
             return ControllerActivity::AcCool;
         }
 
+        if ((status.bathExhaustOn || status.hoodLevel > 0) && status.vfdOnline) {
+            setReason("Cooling required but cooling equipment unavailable; exhaust compensation continues via VFD");
+            return ControllerActivity::Vent;
+        }
+
         setReason("Cooling required but no cooling equipment available");
         return ControllerActivity::Error;
     }
@@ -529,6 +534,11 @@ ControllerActivity ClimateAlgorithm::calculateActivity() {
         if (canUseAcHeating()) {
             setReason("Heating required, using AC heat mode");
             return ControllerActivity::Heat;
+        }
+
+        if ((status.bathExhaustOn || status.hoodLevel > 0) && status.vfdOnline) {
+            setReason("Heating required but AC heating unavailable; exhaust compensation continues via VFD");
+            return ControllerActivity::Vent;
         }
 
         setReason("Heating required but AC heating is unavailable");
@@ -581,9 +591,15 @@ void ClimateAlgorithm::applyActivity(ControllerActivity activity) {
 
 void ClimateAlgorithm::updateFastVentCompensation() {
     const unsigned long now = millis();
-    if (now - lastVentCompensationMs < secondsToMs(settings.ventCompensationUpdateIntervalSec)) return;
+    const unsigned long intervalMs = secondsToMs(settings.ventCompensationUpdateIntervalSec);
+    const unsigned long elapsedMs = lastVentCompensationMs == 0 ? intervalMs : now - lastVentCompensationMs;
+    status.ventCompensationUpdateRemainingSec = elapsedMs >= intervalMs
+        ? 0
+        : (uint32_t)((intervalMs - elapsedMs + 999UL) / 1000UL);
+    if (elapsedMs < intervalMs) return;
     lastVentCompensationMs = now;
     status.lastVentCompensationMs = now;
+    status.ventCompensationUpdateRemainingSec = settings.ventCompensationUpdateIntervalSec;
     if (!hasDecision) return;
     updateDesiredStateForActivity(currentActivity);
     applyDesiredState();
@@ -608,10 +624,23 @@ void ClimateAlgorithm::updateVentRequirements(ControllerActivity activity) {
             exhaustCompDecreaseStartedMs = now;
         }
 
-        if (now - exhaustCompDecreaseStartedMs >= secondsToMs(settings.ventCompensationOffDelaySec)) {
+        const unsigned long offDelayMs = secondsToMs(settings.ventCompensationOffDelaySec);
+        const unsigned long offElapsedMs = now - exhaustCompDecreaseStartedMs;
+        if (offElapsedMs >= offDelayMs) {
             heldExhaustCompRequirementStep = rawExhaustCompStep;
             exhaustCompDecreasePending = false;
         }
+    }
+
+    status.ventCompensationOffDelayActive = exhaustCompDecreasePending;
+    if (exhaustCompDecreasePending) {
+        const unsigned long offDelayMs = secondsToMs(settings.ventCompensationOffDelaySec);
+        const unsigned long offElapsedMs = now - exhaustCompDecreaseStartedMs;
+        status.ventCompensationOffDelayRemainingSec = offElapsedMs >= offDelayMs
+            ? 0
+            : (uint32_t)((offDelayMs - offElapsedMs + 999UL) / 1000UL);
+    } else {
+        status.ventCompensationOffDelayRemainingSec = 0;
     }
 
     status.exhaustCompRequirementStep = heldExhaustCompRequirementStep;
@@ -620,7 +649,9 @@ void ClimateAlgorithm::updateVentRequirements(ControllerActivity activity) {
         : 0;
 
     if (activity == ControllerActivity::Error || activity == ControllerActivity::Idle) {
-        status.requestedVentStepBeforeLimit = 0;
+        status.requestedVentStepBeforeLimit = status.vfdOnline && status.exhaustCompRequirementStep > 0
+            ? status.exhaustCompRequirementStep
+            : 0;
     } else if (settings.additiveVentCompensation) {
         status.requestedVentStepBeforeLimit = max(
             clampStep(status.baseVentRequirementStep + status.exhaustCompRequirementStep),

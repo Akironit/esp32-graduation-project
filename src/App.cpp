@@ -262,6 +262,9 @@ void App::updateDeviceState() {
     state.ac.debugEnabled = hp.debugPrint;
     state.ac.hasReceivedFrame = hp.hasReceivedFrame();
     state.ac.lastFrameAgeMs = hp.hasReceivedFrame() ? hp.getLastFrameAgeMs() : 0;
+    state.ac.communicationError = hp.hasCommunicationError();
+    state.ac.consecutiveErrorCount = hp.getConsecutiveErrorCount();
+    state.ac.errorCount = hp.getErrorCount();
     state.ac.updateFields = hp.getUpdateFields();
 
     state.temperatures.sensorCount = tempSensors.getSensorCount();
@@ -309,10 +312,32 @@ void App::updateDeviceState() {
     state.vfd.requestCount = vfd.getRequestCount();
     state.vfd.okCount = vfd.getOkCount();
     state.vfd.errorCount = vfd.getErrorCount();
+    state.vfd.consecutiveErrorCount = vfd.getConsecutiveErrorCount();
     state.vfd.lastToken = vfd.getLastToken();
     state.vfd.lastErrorCode = vfd.getLastErrorCode();
     state.vfd.hasActivity = vfd.hasActivity();
     state.vfd.lastActivityAgeMs = vfd.getLastActivityAgeMs();
+
+    const AutoControlStatus autoStatus = climateAlgorithm.getStatus();
+    const AutoControlSettings autoSettings = climateAlgorithm.getSettings();
+    state.ventilation.baseRequirementStep = autoStatus.baseVentRequirementStep;
+    state.ventilation.bathCompStep = autoStatus.bathCompStep;
+    state.ventilation.hoodCompStep = autoStatus.hoodCompStep;
+    state.ventilation.exhaustCompRequirementStep = autoStatus.exhaustCompRequirementStep;
+    state.ventilation.coolingRequirementStep = autoStatus.coolingVentRequirementStep;
+    state.ventilation.requestedStepBeforeLimit = autoStatus.requestedVentStepBeforeLimit;
+    state.ventilation.requestedStepAfterLimit = autoStatus.requestedVentStepAfterLimit;
+    state.ventilation.desiredVfdPower = autoStatus.desiredVfdPower;
+    state.ventilation.desiredVfdStep = autoStatus.desiredVfdStep;
+    state.ventilation.coldOutdoorLimitActive = autoStatus.coldOutdoorLimitActive;
+    state.ventilation.compensationUpdateIntervalSec = autoSettings.ventCompensationUpdateIntervalSec;
+    state.ventilation.compensationUpdateRemainingSec = autoStatus.ventCompensationUpdateRemainingSec;
+    state.ventilation.compensationOffDelaySec = autoSettings.ventCompensationOffDelaySec;
+    state.ventilation.compensationOffDelayRemainingSec = autoStatus.ventCompensationOffDelayRemainingSec;
+    state.ventilation.compensationOffDelayActive = autoStatus.ventCompensationOffDelayActive;
+    state.ventilation.additiveCompensation = autoSettings.additiveVentCompensation;
+    strncpy(state.ventilation.reason, autoStatus.reason, sizeof(state.ventilation.reason) - 1);
+    state.ventilation.reason[sizeof(state.ventilation.reason) - 1] = '\0';
 
     state.input.ioExpanderReady = ioExpanderReady;
     state.input.buttonBackPressed = buttonBack.isPressed();

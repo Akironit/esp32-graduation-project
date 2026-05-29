@@ -1913,6 +1913,14 @@ void SerialConsole::processAutoCommand(const String& cmd) {
         println("[ACTUAL]");
         print("actualVfdRunning=");
         println(state != nullptr && state->vfd.running ? 1 : 0);
+        print("actualVfdOnline=");
+        println(state != nullptr && state->vfd.online ? 1 : 0);
+        print("actualVfdCommunicationError=");
+        println(state != nullptr && state->vfd.communicationError ? 1 : 0);
+        print("actualVfdConsecutiveErrors=");
+        println(state != nullptr ? (int)state->vfd.consecutiveErrorCount : 0);
+        print("actualVfdErrorCount=");
+        println(String(state != nullptr ? state->vfd.errorCount : 0));
         print("actualVfdStep=");
         println(state != nullptr ? (int)state->vfd.actualStep : 0);
         print("actualVfdHz=");
@@ -1927,6 +1935,12 @@ void SerialConsole::processAutoCommand(const String& cmd) {
         println(state != nullptr ? (int)state->ac.temperature : 0);
         print("actualAcBound=");
         println(state != nullptr && state->ac.bound ? 1 : 0);
+        print("actualAcCommunicationError=");
+        println(state != nullptr && state->ac.communicationError ? 1 : 0);
+        print("actualAcConsecutiveErrors=");
+        println(state != nullptr ? (int)state->ac.consecutiveErrorCount : 0);
+        print("actualAcErrorCount=");
+        println(String(state != nullptr ? state->ac.errorCount : 0));
         print("reason=");
         println(status.reason);
         print("lastApplyResult=");

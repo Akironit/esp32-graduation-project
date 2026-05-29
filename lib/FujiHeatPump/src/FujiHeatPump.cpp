@@ -107,6 +107,10 @@ void FujiHeatPump::connect(HardwareSerial *serial, bool secondary, int rxPin=-1,
     }
     
     lastFrameReceived = 0;
+    lastLinkErrorCheckMs = 0;
+    consecutiveErrorCount = 0;
+    errorCount = 0;
+    communicationError = false;
     updateFields = 0;
     pendingFrame = false;
     seenPrimaryController = false;
@@ -122,6 +126,22 @@ void FujiHeatPump::printFrame(Print& output, byte buf[8], FujiFrame ff) {
   output.printf(" mSrc: %d mDst: %d mType: %d write: %d login: %d unknown: %d onOff: %d temp: %d, mode: %d cP:%d uM:%d cTemp:%d acError:%d \n", 
     ff.messageSource, ff.messageDest, ff.messageType, ff.writeBit, ff.loginBit, ff.unknownBit, ff.onOff, ff.temperature, ff.acMode, ff.controllerPresent, ff.updateMagic, ff.controllerTemp, ff.acError);
 
+}
+
+void FujiHeatPump::recordCommunicationSuccess() {
+    consecutiveErrorCount = 0;
+    communicationError = false;
+    lastLinkErrorCheckMs = 0;
+}
+
+void FujiHeatPump::recordCommunicationError() {
+    errorCount++;
+    if (consecutiveErrorCount < 255) {
+        consecutiveErrorCount++;
+    }
+    if (consecutiveErrorCount >= kLinkErrorThreshold) {
+        communicationError = true;
+    }
 }
 
 void FujiHeatPump::sendPendingFrame() {
@@ -345,10 +365,11 @@ bool FujiHeatPump::waitForFrame() {
                 Print& output = getDebugOutput();
                 output.print("AC ERROR RECV: ");
                 printFrame(output, readBuf, ff);
-                // handle errors here
+                recordCommunicationError();
                 return false;
             }
             
+            recordCommunicationSuccess();
             encodeFrame(ff);
 
             if(debugPrint) {
@@ -378,10 +399,22 @@ bool FujiHeatPump::waitForFrame() {
 }
 
 bool FujiHeatPump::isBound() {
-    if(hasReceivedFrame() && millis() - lastFrameReceived < kBoundTimeoutMs) {
-        return true;
+    if(!hasReceivedFrame()) {
+        return false;
     }
-    return false;
+
+    const unsigned long now = millis();
+    const unsigned long ageMs = now - lastFrameReceived;
+    if(ageMs < kBoundTimeoutMs) {
+        return !communicationError;
+    }
+
+    if(lastLinkErrorCheckMs == 0 || now - lastLinkErrorCheckMs >= kBoundTimeoutMs) {
+        lastLinkErrorCheckMs = now;
+        recordCommunicationError();
+    }
+
+    return !communicationError;
 }
 
 bool FujiHeatPump::updatePending() {
@@ -401,6 +434,20 @@ unsigned long FujiHeatPump::getLastFrameAgeMs() {
     }
 
     return millis() - lastFrameReceived;
+}
+
+bool FujiHeatPump::hasCommunicationError() {
+    isBound();
+    return communicationError;
+}
+
+uint8_t FujiHeatPump::getConsecutiveErrorCount() {
+    isBound();
+    return consecutiveErrorCount;
+}
+
+uint32_t FujiHeatPump::getErrorCount() {
+    return errorCount;
 }
 
 bool FujiHeatPump::hasSeenPrimaryController() {
@@ -470,6 +517,9 @@ void FujiHeatPump::setControllerRole(bool primary) {
     seenPrimaryController = false;
     seenSecondaryController = false;
     lastFrameReceived = 0;
+    lastLinkErrorCheckMs = 0;
+    consecutiveErrorCount = 0;
+    communicationError = false;
     updateFields = 0;
     pendingFrame = false;
 }

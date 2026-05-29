@@ -51,7 +51,6 @@ void VfdController::begin(
 void VfdController::forward() {
     lastAction = "forward";
     commandedRunning = true;
-    communicationError = false;
     queueWriteSingle(0x2000, 0x0001);
 }
 
@@ -59,7 +58,6 @@ void VfdController::forward() {
 void VfdController::reverse() {
     lastAction = "reverse";
     commandedRunning = true;
-    communicationError = false;
     queueWriteSingle(0x2000, 0x0002);
 }
 
@@ -67,7 +65,6 @@ void VfdController::reverse() {
 void VfdController::stop() {
     lastAction = "stop";
     commandedRunning = false;
-    communicationError = false;
     queueWriteSingle(0x2000, 0x0005);
 }
 
@@ -85,7 +82,6 @@ void VfdController::setFrequency(float hz) {
     lastAction = "set frequency";
     requestedFrequencySet = true;
     requestedFrequencyHz = hz;
-    communicationError = false;
     queueWriteSingle(REG_COMMAND_FREQUENCY, value);
 }
 
@@ -199,6 +195,10 @@ uint32_t VfdController::getOkCount() const {
 
 uint32_t VfdController::getErrorCount() const {
     return errorCount;
+}
+
+uint8_t VfdController::getConsecutiveErrorCount() const {
+    return consecutiveErrorCount;
 }
 
 
@@ -404,12 +404,14 @@ void VfdController::onError(Error error, uint32_t token) {
         }
 
         crcErrorCount++;
-        consecutiveErrorCount++;
+        if (consecutiveErrorCount < 255) {
+            consecutiveErrorCount++;
+        }
         lastToken = token;
         lastErrorCode = (uint8_t)error;
         activitySeen = true;
         lastActivityMs = millis();
-        if (consecutiveErrorCount >= 3) {
+        if (consecutiveErrorCount >= LINK_ERROR_THRESHOLD) {
             communicationError = true;
         }
 
@@ -428,11 +430,13 @@ void VfdController::onError(Error error, uint32_t token) {
     }
 
     errorCount++;
-    consecutiveErrorCount++;
+    if (consecutiveErrorCount < 255) {
+        consecutiveErrorCount++;
+    }
     lastToken = token;
     lastErrorCode = (uint8_t)error;
     activitySeen = true;
-    if (consecutiveErrorCount >= 3 || (lastOkMs > 0 && millis() - lastOkMs > ONLINE_TIMEOUT_MS)) {
+    if (consecutiveErrorCount >= LINK_ERROR_THRESHOLD || (lastOkMs > 0 && millis() - lastOkMs > ONLINE_TIMEOUT_MS)) {
         communicationError = true;
     }
     lastActivityMs = millis();

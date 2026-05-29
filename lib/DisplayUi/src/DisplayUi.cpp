@@ -880,12 +880,15 @@ void DisplayUi::drawOverview(const DeviceState& state) {
 
     const char* acLink = "Wait";
     uint16_t acLinkColor = COLOR_WARN;
-    if (state.ac.bound) {
-        acLink = "Linked";
-        acLinkColor = COLOR_OK;
-    } else if (state.ac.hasReceivedFrame && state.ac.lastFrameAgeMs > 5000) {
+    if (state.ac.communicationError) {
         acLink = "Error";
         acLinkColor = COLOR_DANGER;
+    } else if (state.ac.consecutiveErrorCount > 0) {
+        acLink = "Wait";
+        acLinkColor = COLOR_WARN;
+    } else if (state.ac.bound) {
+        acLink = "Linked";
+        acLinkColor = COLOR_OK;
     }
 
     drawFreeTextBox(17, 14, 128, 34, 18, "AC:", labelFont, COLOR_ACCENT);
@@ -904,6 +907,9 @@ void DisplayUi::drawOverview(const DeviceState& state) {
     if (state.vfd.communicationError) {
         vfdLink = "Error";
         vfdLinkColor = COLOR_DANGER;
+    } else if (state.vfd.consecutiveErrorCount > 0) {
+        vfdLink = "Wait";
+        vfdLinkColor = COLOR_WARN;
     } else if (state.vfd.everOnline || state.vfd.online) {
         vfdLink = "Linked";
         vfdLinkColor = COLOR_OK;
@@ -1129,8 +1135,10 @@ void DisplayUi::drawAirConditioner(const AcStateSnapshot& ac) {
     drawTextBox(0, 20, 50, 125, "SETPOINT", COLOR_MUTED, 1);
     drawTextBox(1, 20, 72, 125, String(ac.temperature) + " C", COLOR_ACCENT, 4);
 
+    const char* acLink = ac.communicationError ? "ERROR" : (ac.consecutiveErrorCount > 0 ? "WAIT" : (ac.bound ? "BOUND" : "WAITING"));
+    const uint16_t acLinkColor = ac.communicationError ? COLOR_DANGER : (ac.consecutiveErrorCount > 0 ? COLOR_WARN : (ac.bound ? COLOR_OK : COLOR_WARN));
     drawTextBox(2, 175, 50, 125, "LINK", COLOR_MUTED, 1);
-    drawTextBox(3, 175, 72, 125, ac.bound ? "BOUND" : "WAITING", ac.bound ? COLOR_OK : COLOR_WARN, 4);
+    drawTextBox(3, 175, 72, 125, acLink, acLinkColor, 4);
 
     drawTextBox(4, 20, 138, 125, "POWER / MODE", COLOR_MUTED, 1);
     drawTextBox(
@@ -1155,8 +1163,8 @@ void DisplayUi::drawAirConditioner(const AcStateSnapshot& ac) {
     );
 
     if (ac.hasReceivedFrame) {
-        const uint16_t frameColor = ac.lastFrameAgeMs < 3000 ? COLOR_OK : COLOR_DANGER;
-        drawTextBox(8, 20, 186, 125, "Frame: " + String(ac.lastFrameAgeMs) + " ms", frameColor, 1);
+        const uint16_t frameColor = ac.communicationError ? COLOR_DANGER : (ac.consecutiveErrorCount > 0 ? COLOR_WARN : COLOR_OK);
+        drawTextBox(8, 20, 186, 125, "Frame " + String(ac.lastFrameAgeMs) + "ms E" + String(ac.errorCount) + "/" + String(ac.consecutiveErrorCount), frameColor, 1);
     } else {
         drawTextBox(8, 20, 186, 125, "Frame: never", COLOR_WARN, 1);
     }
@@ -1174,14 +1182,91 @@ void DisplayUi::drawAirConditioner(const AcStateSnapshot& ac) {
 
 void DisplayUi::drawVentilation(const DeviceState& state) {
     if (fullRedraw) {
-        drawPanel(10, 42, 300, 64, state.environment.exhaustVentEnabled ? COLOR_OK : COLOR_MUTED);
-        drawPanel(10, 116, 300, 92, COLOR_ACCENT);
+        tft.drawFastHLine(12, 67, 296, COLOR_LINE);
+        tft.drawFastHLine(12, 137, 296, COLOR_LINE);
+        tft.drawFastHLine(12, 181, 296, COLOR_LINE);
     }
 
-    drawTextBox(0, 20, 52, 275, "VENTILATION", COLOR_MUTED, 1);
-    drawTextBox(1, 20, 72, 275, state.environment.exhaustVentEnabled ? "exhaust enabled" : "exhaust off", statusColor(state.environment.exhaustVentEnabled), 2);
-    drawTextBox(2, 20, 128, 275, "Supply control is available on Overview", COLOR_TEXT, 2);
-    drawTextBox(3, 20, 154, 275, "Manual VFD page will be expanded later", COLOR_MUTED, 2);
+    const bool actualSupplyOn = state.vfd.running
+        || (state.vfd.hasActualFrequency && state.vfd.actualFrequencyHz > 0.5f);
+    const uint8_t actualStep = vfdStep(state.vfd);
+    const uint16_t supplyColor = actualSupplyOn ? COLOR_OK : COLOR_MUTED;
+    const uint16_t limitColor = state.ventilation.coldOutdoorLimitActive ? COLOR_WARN : COLOR_TEXT;
+    const uint16_t vfdColor = state.vfd.communicationError
+        ? COLOR_DANGER
+        : (state.vfd.consecutiveErrorCount > 0 ? COLOR_WARN : (state.vfd.online ? COLOR_OK : COLOR_WARN));
+    const char* vfdStatus = state.vfd.communicationError
+        ? "ERR"
+        : (state.vfd.consecutiveErrorCount > 0 ? "WAIT" : (state.vfd.online ? "OK" : (state.vfd.initialized ? "WAIT" : "OFF")));
+
+    String reason(state.ventilation.reason);
+    reason.toLowerCase();
+    const char* why = "normal";
+    if (state.ventilation.coldOutdoorLimitActive) {
+        why = "cold outdoor limit";
+    } else if (reason.indexOf("exhaust") >= 0) {
+        why = "exhaust compensation";
+    } else if (reason.indexOf("free cooling") >= 0 || reason.indexOf("outdoor") >= 0) {
+        why = "free cooling";
+    } else if (reason.indexOf("heating") >= 0) {
+        why = "heating";
+    } else if (reason.indexOf("cooling") >= 0) {
+        why = "cooling";
+    } else if (reason.indexOf("safe") >= 0 || reason.indexOf("invalid") >= 0 || reason.indexOf("missing") >= 0) {
+        why = "sensor/safe";
+    } else if (reason.indexOf("disabled") >= 0) {
+        why = "monitoring";
+    }
+
+    const String supplyLine = String("SUP ") + (actualSupplyOn ? "ON " : "OFF")
+        + " STEP " + String(actualStep) + "/6"
+        + "  " + (state.vfd.hasActualFrequency ? String(state.vfd.actualFrequencyHz, 1) + "Hz" : "--.-Hz");
+    drawTextBox(0, 14, 30, 292, supplyLine, supplyColor, 2);
+
+    const String reqLine = String("REQ ") + String(state.ventilation.requestedStepBeforeLimit)
+        + "  LIM " + String(state.ventilation.requestedStepAfterLimit)
+        + "  CMD " + (state.ventilation.desiredVfdPower ? "ON S" : "OFF S")
+        + String(state.ventilation.desiredVfdStep);
+    drawTextBox(1, 14, 51, 292, reqLine, limitColor, 2);
+
+    const String modeLine = String("MODE ") + deviceModeName(state.controllerState.mode)
+        + "  " + activityName(state.controllerState.activity);
+    drawTextBox(2, 14, 73, 292, modeLine, activityColor(state.controllerState.activity), 2);
+
+    const String exhaustLine = String("BATH ") + (state.environment.exhaustVentEnabled ? "ON" : "OFF")
+        + "  HOOD L" + String(state.environment.kitchenHoodLevel);
+    drawTextBox(3, 14, 95, 292, exhaustLine, (state.environment.exhaustVentEnabled || state.environment.kitchenHoodLevel > 0) ? COLOR_WARN : COLOR_MUTED, 2);
+
+    const String compLine = String("COMP B") + String(state.ventilation.bathCompStep)
+        + "+H" + String(state.ventilation.hoodCompStep)
+        + "=" + String(state.ventilation.exhaustCompRequirementStep)
+        + "  BASE " + String(state.ventilation.baseRequirementStep)
+        + (state.ventilation.additiveCompensation ? " ADD" : "");
+    drawTextBox(4, 14, 117, 292, compLine, state.ventilation.exhaustCompRequirementStep > 0 ? COLOR_OK : COLOR_TEXT, 2);
+
+    String offText = "--";
+    if (state.environment.exhaustVentEnabled || state.environment.kitchenHoodLevel > 0) {
+        offText = "hold";
+    } else if (state.ventilation.compensationOffDelayActive) {
+        offText = String(state.ventilation.compensationOffDelayRemainingSec) + "/" + String(state.ventilation.compensationOffDelaySec) + "s";
+    }
+    const String timerLine = String("UPD ") + String(state.ventilation.compensationUpdateRemainingSec)
+        + "/" + String(state.ventilation.compensationUpdateIntervalSec) + "s"
+        + "  OFF " + offText;
+    drawTextBox(5, 14, 139, 292, timerLine, state.ventilation.compensationOffDelayActive ? COLOR_WARN : COLOR_TEXT, 2);
+
+    const String vfdLine = String("VFD ") + vfdStatus
+        + " TX" + String(state.vfd.requestCount)
+        + " RX" + String(state.vfd.okCount)
+        + " E" + String(state.vfd.errorCount) + "/" + String(state.vfd.consecutiveErrorCount);
+    drawTextBox(6, 14, 161, 292, vfdLine, vfdColor, 2);
+
+    const String busLine = String("TOK ") + String(state.vfd.lastToken)
+        + "  ERR 0x" + String(state.vfd.lastErrorCode, HEX)
+        + "  ACT " + String(state.vfd.hasActivity ? state.vfd.lastActivityAgeMs : 0) + "ms";
+    drawTextBox(7, 14, 184, 292, busLine, state.vfd.communicationError ? COLOR_DANGER : COLOR_MUTED, 1);
+
+    drawTextBox(8, 14, 202, 292, String("WHY ") + why, state.ventilation.coldOutdoorLimitActive ? COLOR_WARN : COLOR_MUTED, 1);
 }
 
 void DisplayUi::drawSettings(const DeviceState& state, const AutoControlSettings& autoSettings) {
@@ -1316,8 +1401,8 @@ void DisplayUi::drawDiagnostics(const DeviceState& state) {
 
     drawTextBox(0, 20, 52, 275, "DIAGNOSTICS", COLOR_MUTED, 1);
     drawTextBox(1, 20, 72, 275, "Warn " + String(state.controllerState.warningCount) + "  Err " + String(state.controllerState.errorCount), COLOR_TEXT, 2);
-    drawTextBox(2, 20, 128, 275, "AC frame " + String(state.ac.hasReceivedFrame ? state.ac.lastFrameAgeMs : 0) + " ms", state.ac.hasReceivedFrame ? COLOR_TEXT : COLOR_WARN, 2);
-    drawTextBox(3, 20, 154, 275, "VFD ok " + String(state.vfd.okCount) + "  err " + String(state.vfd.errorCount), COLOR_MUTED, 2);
+    drawTextBox(2, 20, 128, 275, "AC frame " + String(state.ac.hasReceivedFrame ? state.ac.lastFrameAgeMs : 0) + " ms  err " + String(state.ac.errorCount) + "/" + String(state.ac.consecutiveErrorCount), state.ac.communicationError ? COLOR_DANGER : (state.ac.consecutiveErrorCount > 0 ? COLOR_WARN : COLOR_TEXT), 2);
+    drawTextBox(3, 20, 154, 275, "VFD ok " + String(state.vfd.okCount) + "  err " + String(state.vfd.errorCount) + "/" + String(state.vfd.consecutiveErrorCount), state.vfd.communicationError ? COLOR_DANGER : COLOR_MUTED, 2);
 }
 
 void DisplayUi::drawPlaceholder(const char* title, const char* line1, const char* line2) {

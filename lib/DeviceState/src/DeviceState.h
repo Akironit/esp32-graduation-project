@@ -21,6 +21,9 @@ struct AcStateSnapshot {
     bool debugEnabled = false;
     bool hasReceivedFrame = false;
     unsigned long lastFrameAgeMs = 0;
+    bool communicationError = false;
+    uint8_t consecutiveErrorCount = 0;
+    uint32_t errorCount = 0;
     uint8_t updateFields = 0;
 };
 
@@ -59,6 +62,7 @@ struct VfdStateSnapshot {
     uint32_t requestCount = 0;
     uint32_t okCount = 0;
     uint32_t errorCount = 0;
+    uint8_t consecutiveErrorCount = 0;
     uint32_t lastToken = 0;
     uint8_t lastErrorCode = 0;
     bool hasActivity = false;
@@ -87,6 +91,26 @@ struct HomeAssistantStateSnapshot {
     uint32_t commandCount = 0;
     bool hasPublished = false;
     unsigned long lastPublishAgeMs = 0;
+};
+
+struct VentilationStateSnapshot {
+    uint8_t baseRequirementStep = 0;
+    uint8_t bathCompStep = 0;
+    uint8_t hoodCompStep = 0;
+    uint8_t exhaustCompRequirementStep = 0;
+    uint8_t coolingRequirementStep = 0;
+    uint8_t requestedStepBeforeLimit = 0;
+    uint8_t requestedStepAfterLimit = 0;
+    uint8_t desiredVfdStep = 0;
+    bool desiredVfdPower = false;
+    bool coldOutdoorLimitActive = false;
+    uint32_t compensationUpdateIntervalSec = 0;
+    uint32_t compensationUpdateRemainingSec = 0;
+    uint32_t compensationOffDelaySec = 0;
+    uint32_t compensationOffDelayRemainingSec = 0;
+    bool compensationOffDelayActive = false;
+    bool additiveCompensation = false;
+    char reason[96] = "Not evaluated";
 };
 
 enum class DeviceMode : uint8_t {
@@ -154,6 +178,7 @@ struct DeviceState {
     InputStateSnapshot input;
     DisplayStateSnapshot display;
     HomeAssistantStateSnapshot homeAssistant;
+    VentilationStateSnapshot ventilation;
 
     unsigned long uptimeMs = 0;
     uint32_t uptimeSeconds = 0;

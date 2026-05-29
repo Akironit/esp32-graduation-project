@@ -53,6 +53,9 @@ struct AutoControlStatus {
     unsigned long lastCommandMs = 0;
     unsigned long lastDecisionMs = 0;
     unsigned long lastVentCompensationMs = 0;
+    uint32_t ventCompensationUpdateRemainingSec = 0;
+    uint32_t ventCompensationOffDelayRemainingSec = 0;
+    bool ventCompensationOffDelayActive = false;
     unsigned long stateEnteredMs = 0;
     bool inputValid = false;
 };

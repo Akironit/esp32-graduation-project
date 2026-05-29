@@ -43,6 +43,7 @@ public:
     uint32_t getRequestCount() const;
     uint32_t getOkCount() const;
     uint32_t getErrorCount() const;
+    uint8_t getConsecutiveErrorCount() const;
     uint32_t getLastToken() const;
     uint8_t getLastErrorCode() const;
     bool hasActivity() const;
@@ -51,6 +52,7 @@ public:
 
 private:
     static constexpr unsigned long REQUEST_TIMEOUT_GUARD_MS = 1000;
+    static constexpr uint8_t LINK_ERROR_THRESHOLD = 3;
 
     ModbusClientRTU client;
     uint32_t tokenCounter = 1;

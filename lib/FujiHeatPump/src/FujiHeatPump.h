@@ -48,6 +48,7 @@ const byte kControllerTempMask = 0b01111110;
 const byte kControllerTempOffset = 1;
 
 const unsigned long kBoundTimeoutMs = 3000;
+const byte kLinkErrorThreshold = 3;
 
 
 typedef struct FujiFrames  {
@@ -94,6 +95,10 @@ class FujiHeatPump {
     FujiFrame       currentState;
     bool            controllerTempOverrideEnabled = false;
     byte            controllerTempOverride = 16;
+    uint8_t         consecutiveErrorCount = 0;
+    uint32_t        errorCount = 0;
+    bool            communicationError = false;
+    unsigned long   lastLinkErrorCheckMs = 0;
 
     FujiFrame decodeFrame();
     void encodeFrame(FujiFrame ff);
@@ -103,6 +108,8 @@ class FujiHeatPump {
     bool isPlausibleFrame(byte buf[8]);
     Print& getDebugOutput();
     void printFrame(Print& output, byte buf[8], FujiFrame ff);
+    void recordCommunicationSuccess();
+    void recordCommunicationError();
     
     bool pendingFrame = false;
   public:
@@ -115,6 +122,9 @@ class FujiHeatPump {
     bool updatePending();
     bool hasReceivedFrame();
     unsigned long getLastFrameAgeMs();
+    bool hasCommunicationError();
+    uint8_t getConsecutiveErrorCount();
+    uint32_t getErrorCount();
     bool hasSeenPrimaryController();
     bool hasSeenSecondaryController();
     bool isPrimaryController();
