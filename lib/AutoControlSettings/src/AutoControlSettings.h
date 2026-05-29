@@ -38,21 +38,21 @@ struct AutoControlSettings {
     bool acFanAutoAllowed = true;
     bool acDynamicControlEnabled = true;
     float acCoolingFullPowerDeltaC = 3.0f;
-    float acCoolingMinTempOffsetC = 1.0f;
-    float acCoolingMaxTempOffsetC = 5.0f;
-    float acCoolingMinSetpointC = 18.0f;
+    uint8_t acCoolingMinTempOffsetC = 1;
+    uint8_t acCoolingMaxTempOffsetC = 5;
+    uint8_t acCoolingMinSetpointC = 18;
     uint8_t acCoolingMinFanSpeed = 2;
     uint8_t acCoolingMaxFanSpeed = 4;
     float acHeatingFullPowerDeltaC = 3.0f;
-    float acHeatingMinTempOffsetC = 1.0f;
-    float acHeatingMaxTempOffsetC = 4.0f;
-    float acHeatingMaxSetpointC = 30.0f;
+    uint8_t acHeatingMinTempOffsetC = 1;
+    uint8_t acHeatingMaxTempOffsetC = 4;
+    uint8_t acHeatingMaxSetpointC = 30;
     uint8_t acHeatingMinFanSpeed = 2;
     uint8_t acHeatingMaxFanSpeed = 4;
 
     unsigned long decisionIntervalMs = 5000;
-    unsigned long minStateHoldMs = 60000;
-    unsigned long ventCoolingCheckIntervalMs = 5400000UL;
+    unsigned long minStateHoldMs = 5000;
+    uint32_t ventCoolingCheckIntervalSec = 600UL;
     float ventCoolingMinDropC = 0.3f;
     bool ventCoolingStepUpOnFail = true;
     bool ventCoolingFallbackToAc = true;
@@ -61,8 +61,8 @@ struct AutoControlSettings {
     bool safeOnCriticalEquipmentError = true;
     bool diagnosticVerbose = false;
 
-    unsigned long ventCompensationUpdateIntervalMs = 1000;
-    unsigned long ventCompensationOffDelayMs = 10000;
+    uint32_t ventCompensationUpdateIntervalSec = 1;
+    uint32_t ventCompensationOffDelaySec = 600;
     bool ventCompensationImmediateUp = true;
     bool ventCompensationImmediateDown = false;
 };

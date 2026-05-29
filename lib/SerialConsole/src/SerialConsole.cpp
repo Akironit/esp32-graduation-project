@@ -1405,9 +1405,9 @@ void SerialConsole::printAutoHelp() {
     println("auto vent-additive on/off");
     println("auto cold-limit <temp>");
     println("auto cold-max-step <0-6>");
-    println("auto interval <ms>");
-    println("auto hold <ms>");
-    println("auto vent-check <ms>");
+    println("auto decision-interval-sec <s>");
+    println("auto min-state-hold-sec <s>");
+    println("auto vent-cooling-check-sec <s>");
     println("auto vent-min-drop <value>");
     println("auto vent-step-up on/off");
     println("auto vent-fallback-ac on/off");
@@ -1424,21 +1424,21 @@ void SerialConsole::printAutoHelp() {
     println("auto ac-fan-auto on/off");
     println("auto ac-dynamic on/off");
     println("auto ac-cool-full-delta <value>");
-    println("auto ac-cool-min-offset <value>");
-    println("auto ac-cool-max-offset <value>");
-    println("auto ac-cool-min-temp <temp>");
+    println("auto ac-cool-min-offset <integer C>");
+    println("auto ac-cool-max-offset <integer C>");
+    println("auto ac-cool-min-temp <integer temp>");
     println("auto ac-cool-fan-min <0-4>");
     println("auto ac-cool-fan-max <0-4>");
     println("auto ac-heat-full-delta <value>");
-    println("auto ac-heat-min-offset <value>");
-    println("auto ac-heat-max-offset <value>");
-    println("auto ac-heat-max-temp <temp>");
+    println("auto ac-heat-min-offset <integer C>");
+    println("auto ac-heat-max-offset <integer C>");
+    println("auto ac-heat-max-temp <integer temp>");
     println("auto ac-heat-fan-min <0-4>");
     println("auto ac-heat-fan-max <0-4>");
     println("auto safe-no-indoor on/off");
     println("auto safe-equipment on/off");
-    println("auto vent-comp-interval <ms>");
-    println("auto vent-comp-off-delay <ms>");
+    println("auto vent-comp-update-sec <s>");
+    println("auto vent-comp-off-delay-sec <s>");
     println("auto vent-comp-up on/off");
     println("auto vent-comp-down on/off");
     println("auto save                         - force save now");
@@ -1803,6 +1803,34 @@ void SerialConsole::processAutoCommand(const String& cmd) {
         return true;
     };
 
+    bool integerValueExpected = false;
+    auto parseUnsignedLong = [&](const String& value, unsigned long& result) {
+        if (value.length() == 0) {
+            integerValueExpected = true;
+            return false;
+        }
+
+        for (uint16_t i = 0; i < value.length(); i++) {
+            if (!isDigit(value[i])) {
+                integerValueExpected = true;
+                return false;
+            }
+        }
+
+        result = strtoul(value.c_str(), nullptr, 10);
+        return true;
+    };
+
+    auto parseByteInteger = [&](const String& value, uint8_t& result) {
+        unsigned long parsed = 0;
+        if (!parseUnsignedLong(value, parsed) || parsed > 255UL) {
+            return false;
+        }
+
+        result = (uint8_t)parsed;
+        return true;
+    };
+
     if (args.length() == 0 || args == "status") {
         const AutoControlStatus status = climateAlgorithm->getStatus();
         println();
@@ -1998,12 +2026,18 @@ void SerialConsole::processAutoCommand(const String& cmd) {
         settings.coldOutdoorTempLimitC = value.toFloat();
     } else if (key == "cold-max-step") {
         changed = parseStep(value, settings.coldOutdoorMaxVentStep);
-    } else if (key == "interval") {
-        settings.decisionIntervalMs = value.toInt();
-    } else if (key == "hold") {
-        settings.minStateHoldMs = value.toInt();
-    } else if (key == "vent-check") {
-        settings.ventCoolingCheckIntervalMs = value.toInt();
+    } else if (key == "decision-interval-sec" || key == "interval") {
+        unsigned long parsed = 0;
+        changed = parseUnsignedLong(value, parsed);
+        if (changed) settings.decisionIntervalMs = parsed * 1000UL;
+    } else if (key == "min-state-hold-sec" || key == "hold") {
+        unsigned long parsed = 0;
+        changed = parseUnsignedLong(value, parsed);
+        if (changed) settings.minStateHoldMs = parsed * 1000UL;
+    } else if (key == "vent-cooling-check-sec" || key == "vent-check") {
+        unsigned long parsed = 0;
+        changed = parseUnsignedLong(value, parsed);
+        if (changed) settings.ventCoolingCheckIntervalSec = (uint32_t)parsed;
     } else if (key == "vent-min-drop") {
         settings.ventCoolingMinDropC = value.toFloat();
     } else if (key == "vent-step-up") {
@@ -2042,11 +2076,11 @@ void SerialConsole::processAutoCommand(const String& cmd) {
     } else if (key == "ac-cool-full-delta") {
         settings.acCoolingFullPowerDeltaC = value.toFloat();
     } else if (key == "ac-cool-min-offset") {
-        settings.acCoolingMinTempOffsetC = value.toFloat();
+        changed = parseByteInteger(value, settings.acCoolingMinTempOffsetC);
     } else if (key == "ac-cool-max-offset") {
-        settings.acCoolingMaxTempOffsetC = value.toFloat();
+        changed = parseByteInteger(value, settings.acCoolingMaxTempOffsetC);
     } else if (key == "ac-cool-min-temp") {
-        settings.acCoolingMinSetpointC = value.toFloat();
+        changed = parseByteInteger(value, settings.acCoolingMinSetpointC);
     } else if (key == "ac-cool-fan-min" || key == "ac-cool-fan") {
         changed = parseAcFan(value, settings.acCoolingMinFanSpeed);
         if (key == "ac-cool-fan") {
@@ -2057,11 +2091,11 @@ void SerialConsole::processAutoCommand(const String& cmd) {
     } else if (key == "ac-heat-full-delta") {
         settings.acHeatingFullPowerDeltaC = value.toFloat();
     } else if (key == "ac-heat-min-offset") {
-        settings.acHeatingMinTempOffsetC = value.toFloat();
+        changed = parseByteInteger(value, settings.acHeatingMinTempOffsetC);
     } else if (key == "ac-heat-max-offset") {
-        settings.acHeatingMaxTempOffsetC = value.toFloat();
+        changed = parseByteInteger(value, settings.acHeatingMaxTempOffsetC);
     } else if (key == "ac-heat-max-temp") {
-        settings.acHeatingMaxSetpointC = value.toFloat();
+        changed = parseByteInteger(value, settings.acHeatingMaxSetpointC);
     } else if (key == "ac-heat-fan-min" || key == "ac-heat-fan") {
         changed = parseAcFan(value, settings.acHeatingMinFanSpeed);
         if (key == "ac-heat-fan") {
@@ -2073,12 +2107,14 @@ void SerialConsole::processAutoCommand(const String& cmd) {
         changed = parseOnOff(value, settings.safeOnIndoorSensorMissing);
     } else if (key == "safe-equipment") {
         changed = parseOnOff(value, settings.safeOnCriticalEquipmentError);
-    } else if (key == "vent-comp-interval") {
-        settings.ventCompensationUpdateIntervalMs = value.toInt();
-        changed = true;
-    } else if (key == "vent-comp-off-delay") {
-        settings.ventCompensationOffDelayMs = value.toInt();
-        changed = true;
+    } else if (key == "vent-comp-update-sec" || key == "vent-comp-interval") {
+        unsigned long parsed = 0;
+        changed = parseUnsignedLong(value, parsed);
+        if (changed) settings.ventCompensationUpdateIntervalSec = (uint32_t)parsed;
+    } else if (key == "vent-comp-off-delay-sec" || key == "vent-comp-off-delay") {
+        unsigned long parsed = 0;
+        changed = parseUnsignedLong(value, parsed);
+        if (changed) settings.ventCompensationOffDelaySec = (uint32_t)parsed;
     } else if (key == "vent-comp-up") {
         changed = parseOnOff(value, settings.ventCompensationImmediateUp);
     } else if (key == "vent-comp-down") {
@@ -2089,6 +2125,10 @@ void SerialConsole::processAutoCommand(const String& cmd) {
     }
 
     if (!changed) {
+        if (integerValueExpected) {
+            println("[AUTO] Invalid value: integer value expected");
+            return;
+        }
         println("[AUTO] Invalid value");
         return;
     }
@@ -2134,27 +2174,27 @@ void SerialConsole::printAutoConfig(const AutoControlSettings& settings) {
     println(String("acFanAutoAllowed=") + (settings.acFanAutoAllowed ? 1 : 0) + "    command: auto ac-fan-auto on/off");
     println(String("acDynamicControlEnabled=") + (settings.acDynamicControlEnabled ? 1 : 0) + "    command: auto ac-dynamic on/off");
     println(String("acCoolingFullPowerDeltaC=") + String(settings.acCoolingFullPowerDeltaC, 2) + "    command: auto ac-cool-full-delta <value>");
-    println(String("acCoolingMinTempOffsetC=") + String(settings.acCoolingMinTempOffsetC, 2) + "    command: auto ac-cool-min-offset <value>");
-    println(String("acCoolingMaxTempOffsetC=") + String(settings.acCoolingMaxTempOffsetC, 2) + "    command: auto ac-cool-max-offset <value>");
-    println(String("acCoolingMinSetpointC=") + String(settings.acCoolingMinSetpointC, 1) + "    command: auto ac-cool-min-temp <temp>");
+    println(String("acCoolingMinTempOffsetC=") + String((int)settings.acCoolingMinTempOffsetC) + " C    command: auto ac-cool-min-offset <integer C>");
+    println(String("acCoolingMaxTempOffsetC=") + String((int)settings.acCoolingMaxTempOffsetC) + " C    command: auto ac-cool-max-offset <integer C>");
+    println(String("acCoolingMinSetpointC=") + String((int)settings.acCoolingMinSetpointC) + " C    command: auto ac-cool-min-temp <integer temp>");
     println(String("acCoolingMinFanSpeed=") + (int)settings.acCoolingMinFanSpeed + "    command: auto ac-cool-fan-min <0-4>");
     println(String("acCoolingMaxFanSpeed=") + (int)settings.acCoolingMaxFanSpeed + "    command: auto ac-cool-fan-max <0-4>");
     println(String("acHeatingFullPowerDeltaC=") + String(settings.acHeatingFullPowerDeltaC, 2) + "    command: auto ac-heat-full-delta <value>");
-    println(String("acHeatingMinTempOffsetC=") + String(settings.acHeatingMinTempOffsetC, 2) + "    command: auto ac-heat-min-offset <value>");
-    println(String("acHeatingMaxTempOffsetC=") + String(settings.acHeatingMaxTempOffsetC, 2) + "    command: auto ac-heat-max-offset <value>");
-    println(String("acHeatingMaxSetpointC=") + String(settings.acHeatingMaxSetpointC, 1) + "    command: auto ac-heat-max-temp <temp>");
+    println(String("acHeatingMinTempOffsetC=") + String((int)settings.acHeatingMinTempOffsetC) + " C    command: auto ac-heat-min-offset <integer C>");
+    println(String("acHeatingMaxTempOffsetC=") + String((int)settings.acHeatingMaxTempOffsetC) + " C    command: auto ac-heat-max-offset <integer C>");
+    println(String("acHeatingMaxSetpointC=") + String((int)settings.acHeatingMaxSetpointC) + " C    command: auto ac-heat-max-temp <integer temp>");
     println(String("acHeatingMinFanSpeed=") + (int)settings.acHeatingMinFanSpeed + "    command: auto ac-heat-fan-min <0-4>");
     println(String("acHeatingMaxFanSpeed=") + (int)settings.acHeatingMaxFanSpeed + "    command: auto ac-heat-fan-max <0-4>");
-    println(String("decisionIntervalMs=") + String(settings.decisionIntervalMs) + "    command: auto interval <ms>");
-    println(String("minStateHoldMs=") + String(settings.minStateHoldMs) + "    command: auto hold <ms>");
-    println(String("ventCoolingCheckIntervalMs=") + String(settings.ventCoolingCheckIntervalMs) + "    command: auto vent-check <ms>");
+    println(String("decisionIntervalSec=") + String(settings.decisionIntervalMs / 1000UL) + " s    command: auto decision-interval-sec <s>");
+    println(String("minStateHoldSec=") + String(settings.minStateHoldMs / 1000UL) + " s    command: auto min-state-hold-sec <s>");
+    println(String("ventCoolingCheckIntervalSec=") + String(settings.ventCoolingCheckIntervalSec) + " s    command: auto vent-cooling-check-sec <s>");
     println(String("ventCoolingMinDropC=") + String(settings.ventCoolingMinDropC, 2) + "    command: auto vent-min-drop <value>");
     println(String("ventCoolingStepUpOnFail=") + (settings.ventCoolingStepUpOnFail ? 1 : 0) + "    command: auto vent-step-up on/off");
     println(String("ventCoolingFallbackToAc=") + (settings.ventCoolingFallbackToAc ? 1 : 0) + "    command: auto vent-fallback-ac on/off");
     println(String("safeOnIndoorSensorMissing=") + (settings.safeOnIndoorSensorMissing ? 1 : 0) + "    command: auto safe-no-indoor on/off");
     println(String("safeOnCriticalEquipmentError=") + (settings.safeOnCriticalEquipmentError ? 1 : 0) + "    command: auto safe-equipment on/off");
-    println(String("ventCompensationUpdateIntervalMs=") + String(settings.ventCompensationUpdateIntervalMs) + "    command: auto vent-comp-interval <ms>");
-    println(String("ventCompensationOffDelayMs=") + String(settings.ventCompensationOffDelayMs) + "    command: auto vent-comp-off-delay <ms>");
+    println(String("ventCompensationUpdateIntervalSec=") + String(settings.ventCompensationUpdateIntervalSec) + " s    command: auto vent-comp-update-sec <s>");
+    println(String("ventCompensationOffDelaySec=") + String(settings.ventCompensationOffDelaySec) + " s    command: auto vent-comp-off-delay-sec <s>");
     println(String("ventCompensationImmediateUp=") + (settings.ventCompensationImmediateUp ? 1 : 0) + "    command: auto vent-comp-up on/off");
     println(String("ventCompensationImmediateDown=") + (settings.ventCompensationImmediateDown ? 1 : 0) + "    command: auto vent-comp-down on/off");
 }

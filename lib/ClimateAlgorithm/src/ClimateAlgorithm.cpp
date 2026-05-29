@@ -24,6 +24,19 @@ float clampFloat(float value, float minValue, float maxValue) {
     if (value > maxValue) return maxValue;
     return value;
 }
+
+uint32_t secondsToMs(uint32_t seconds) {
+    return seconds * 1000UL;
+}
+
+uint32_t msToSecondsGuarded(unsigned long milliseconds, uint32_t fallbackSeconds, uint32_t maxSeconds) {
+    if (milliseconds == 0) {
+        return 0;
+    }
+
+    const uint32_t seconds = (uint32_t)((milliseconds + 999UL) / 1000UL);
+    return seconds <= maxSeconds ? seconds : fallbackSeconds;
+}
 }
 
 void ClimateAlgorithm::begin(DeviceState* state, DeviceController* controller) {
@@ -132,18 +145,18 @@ void ClimateAlgorithm::setSettings(const AutoControlSettings& newSettings, bool 
     settings.acFanBoostSpeed = clampAcFan(settings.acFanBoostSpeed, settings.acFanAutoAllowed);
     settings.acFanMaxSpeed = clampAcFan(settings.acFanMaxSpeed, settings.acFanAutoAllowed);
     settings.acCoolingFullPowerDeltaC = clampFloat(settings.acCoolingFullPowerDeltaC, 0.1f, 10.0f);
-    settings.acCoolingMinTempOffsetC = clampFloat(settings.acCoolingMinTempOffsetC, 0.0f, 10.0f);
-    settings.acCoolingMaxTempOffsetC = clampFloat(settings.acCoolingMaxTempOffsetC, settings.acCoolingMinTempOffsetC, 10.0f);
-    settings.acCoolingMinSetpointC = clampFloat(settings.acCoolingMinSetpointC, 16.0f, 30.0f);
+    settings.acCoolingMinTempOffsetC = constrain(settings.acCoolingMinTempOffsetC, (uint8_t)0, (uint8_t)10);
+    settings.acCoolingMaxTempOffsetC = constrain(settings.acCoolingMaxTempOffsetC, settings.acCoolingMinTempOffsetC, (uint8_t)10);
+    settings.acCoolingMinSetpointC = constrain(settings.acCoolingMinSetpointC, (uint8_t)16, (uint8_t)30);
     settings.acCoolingMinFanSpeed = clampAcFan(settings.acCoolingMinFanSpeed, settings.acFanAutoAllowed);
     settings.acCoolingMaxFanSpeed = clampAcFan(settings.acCoolingMaxFanSpeed, settings.acFanAutoAllowed);
     if (settings.acCoolingMaxFanSpeed < settings.acCoolingMinFanSpeed) {
         settings.acCoolingMaxFanSpeed = settings.acCoolingMinFanSpeed;
     }
     settings.acHeatingFullPowerDeltaC = clampFloat(settings.acHeatingFullPowerDeltaC, 0.1f, 10.0f);
-    settings.acHeatingMinTempOffsetC = clampFloat(settings.acHeatingMinTempOffsetC, 0.0f, 10.0f);
-    settings.acHeatingMaxTempOffsetC = clampFloat(settings.acHeatingMaxTempOffsetC, settings.acHeatingMinTempOffsetC, 10.0f);
-    settings.acHeatingMaxSetpointC = clampFloat(settings.acHeatingMaxSetpointC, 16.0f, 30.0f);
+    settings.acHeatingMinTempOffsetC = constrain(settings.acHeatingMinTempOffsetC, (uint8_t)0, (uint8_t)10);
+    settings.acHeatingMaxTempOffsetC = constrain(settings.acHeatingMaxTempOffsetC, settings.acHeatingMinTempOffsetC, (uint8_t)10);
+    settings.acHeatingMaxSetpointC = constrain(settings.acHeatingMaxSetpointC, (uint8_t)16, (uint8_t)30);
     settings.acHeatingMinFanSpeed = clampAcFan(settings.acHeatingMinFanSpeed, settings.acFanAutoAllowed);
     settings.acHeatingMaxFanSpeed = clampAcFan(settings.acHeatingMaxFanSpeed, settings.acFanAutoAllowed);
     if (settings.acHeatingMaxFanSpeed < settings.acHeatingMinFanSpeed) {
@@ -153,11 +166,11 @@ void ClimateAlgorithm::setSettings(const AutoControlSettings& newSettings, bool 
         settings.acFanOnlyMode = 1;
     }
     settings.decisionIntervalMs = constrain(settings.decisionIntervalMs, 1000UL, 60000UL);
-    settings.minStateHoldMs = min(settings.minStateHoldMs, 3600000UL);
-    settings.ventCoolingCheckIntervalMs = constrain(settings.ventCoolingCheckIntervalMs, 60000UL, 21600000UL);
+    settings.minStateHoldMs = constrain(settings.minStateHoldMs, 0UL, 3600000UL);
+    settings.ventCoolingCheckIntervalSec = constrain(settings.ventCoolingCheckIntervalSec, 60UL, 21600UL);
     settings.ventCoolingMinDropC = clampFloat(settings.ventCoolingMinDropC, 0.0f, 5.0f);
-    settings.ventCompensationUpdateIntervalMs = constrain(settings.ventCompensationUpdateIntervalMs, 500UL, 10000UL);
-    settings.ventCompensationOffDelayMs = min(settings.ventCompensationOffDelayMs, 300000UL);
+    settings.ventCompensationUpdateIntervalSec = constrain(settings.ventCompensationUpdateIntervalSec, 1UL, 120UL);
+    settings.ventCompensationOffDelaySec = constrain(settings.ventCompensationOffDelaySec, 0UL, 3600UL);
 
     if (fabsf(oldTarget - settings.targetTempC) > 0.01f) {
         resetVentCoolingCheck();
@@ -236,28 +249,64 @@ bool ClimateAlgorithm::loadSettings() {
     loaded.acFanAutoAllowed = preferences.getBool("fanAuto", loaded.acFanAutoAllowed);
     loaded.acDynamicControlEnabled = preferences.getBool("acDynamic", loaded.acDynamicControlEnabled);
     loaded.acCoolingFullPowerDeltaC = preferences.getFloat("acCoolFullD", loaded.acCoolingFullPowerDeltaC);
-    loaded.acCoolingMinTempOffsetC = preferences.getFloat("acCoolMinOff", loaded.acCoolingMinTempOffsetC);
-    loaded.acCoolingMaxTempOffsetC = preferences.getFloat("acCoolMaxOff", loaded.acCoolingMaxTempOffsetC);
-    loaded.acCoolingMinSetpointC = preferences.getFloat("acCoolMinT", loaded.acCoolingMinSetpointC);
+    loaded.acCoolingMinTempOffsetC = preferences.isKey("acCoolMinOffI")
+        ? preferences.getUChar("acCoolMinOffI", loaded.acCoolingMinTempOffsetC)
+        : (uint8_t)lroundf(preferences.getFloat("acCoolMinOff", loaded.acCoolingMinTempOffsetC));
+    loaded.acCoolingMaxTempOffsetC = preferences.isKey("acCoolMaxOffI")
+        ? preferences.getUChar("acCoolMaxOffI", loaded.acCoolingMaxTempOffsetC)
+        : (uint8_t)lroundf(preferences.getFloat("acCoolMaxOff", loaded.acCoolingMaxTempOffsetC));
+    loaded.acCoolingMinSetpointC = preferences.isKey("acCoolMinTI")
+        ? preferences.getUChar("acCoolMinTI", loaded.acCoolingMinSetpointC)
+        : (uint8_t)lroundf(preferences.getFloat("acCoolMinT", loaded.acCoolingMinSetpointC));
     loaded.acCoolingMinFanSpeed = preferences.getUChar("acCoolFanMin", preferences.getUChar("coolFanSpeed", loaded.acCoolingMinFanSpeed));
     loaded.acCoolingMaxFanSpeed = preferences.getUChar("acCoolFanMax", loaded.acCoolingMaxFanSpeed);
     loaded.acHeatingFullPowerDeltaC = preferences.getFloat("acHeatFullD", loaded.acHeatingFullPowerDeltaC);
-    loaded.acHeatingMinTempOffsetC = preferences.getFloat("acHeatMinOff", loaded.acHeatingMinTempOffsetC);
-    loaded.acHeatingMaxTempOffsetC = preferences.getFloat("acHeatMaxOff", loaded.acHeatingMaxTempOffsetC);
-    loaded.acHeatingMaxSetpointC = preferences.getFloat("acHeatMaxT", loaded.acHeatingMaxSetpointC);
+    loaded.acHeatingMinTempOffsetC = preferences.isKey("acHeatMinOffI")
+        ? preferences.getUChar("acHeatMinOffI", loaded.acHeatingMinTempOffsetC)
+        : (uint8_t)lroundf(preferences.getFloat("acHeatMinOff", loaded.acHeatingMinTempOffsetC));
+    loaded.acHeatingMaxTempOffsetC = preferences.isKey("acHeatMaxOffI")
+        ? preferences.getUChar("acHeatMaxOffI", loaded.acHeatingMaxTempOffsetC)
+        : (uint8_t)lroundf(preferences.getFloat("acHeatMaxOff", loaded.acHeatingMaxTempOffsetC));
+    loaded.acHeatingMaxSetpointC = preferences.isKey("acHeatMaxTI")
+        ? preferences.getUChar("acHeatMaxTI", loaded.acHeatingMaxSetpointC)
+        : (uint8_t)lroundf(preferences.getFloat("acHeatMaxT", loaded.acHeatingMaxSetpointC));
     loaded.acHeatingMinFanSpeed = preferences.getUChar("acHeatFanMin", preferences.getUChar("heatFanSpeed", loaded.acHeatingMinFanSpeed));
     loaded.acHeatingMaxFanSpeed = preferences.getUChar("acHeatFanMax", loaded.acHeatingMaxFanSpeed);
     loaded.decisionIntervalMs = preferences.getULong("decisionMs", preferences.getULong("interval", loaded.decisionIntervalMs));
     loaded.minStateHoldMs = preferences.getULong("holdMs", preferences.getULong("hold", loaded.minStateHoldMs));
-    loaded.ventCoolingCheckIntervalMs = preferences.getULong("ventChkMs", preferences.getULong("ventTimeout", loaded.ventCoolingCheckIntervalMs));
+    if (preferences.isKey("ventChkSec")) {
+        loaded.ventCoolingCheckIntervalSec = preferences.getULong("ventChkSec", loaded.ventCoolingCheckIntervalSec);
+    } else {
+        loaded.ventCoolingCheckIntervalSec = msToSecondsGuarded(
+            preferences.getULong("ventChkMs", preferences.getULong("ventTimeout", secondsToMs(loaded.ventCoolingCheckIntervalSec))),
+            loaded.ventCoolingCheckIntervalSec,
+            21600UL
+        );
+    }
     loaded.ventCoolingMinDropC = preferences.getFloat("ventMinDrop", preferences.getFloat("ventDrop", loaded.ventCoolingMinDropC));
     loaded.ventCoolingStepUpOnFail = preferences.getBool("ventStepFail", loaded.ventCoolingStepUpOnFail);
     loaded.ventCoolingFallbackToAc = preferences.getBool("ventFbAc", loaded.ventCoolingFallbackToAc);
     loaded.safeOnIndoorSensorMissing = preferences.getBool("safeNoIndoor", loaded.safeOnIndoorSensorMissing);
     loaded.safeOnCriticalEquipmentError = preferences.getBool("safeEquip", loaded.safeOnCriticalEquipmentError);
     loaded.diagnosticVerbose = preferences.getBool("diagVerbose", preferences.getBool("autoLog", loaded.diagnosticVerbose));
-    loaded.ventCompensationUpdateIntervalMs = preferences.getULong("ventCompMs", loaded.ventCompensationUpdateIntervalMs);
-    loaded.ventCompensationOffDelayMs = preferences.getULong("ventOffDelay", loaded.ventCompensationOffDelayMs);
+    if (preferences.isKey("ventCompSec")) {
+        loaded.ventCompensationUpdateIntervalSec = preferences.getULong("ventCompSec", loaded.ventCompensationUpdateIntervalSec);
+    } else {
+        loaded.ventCompensationUpdateIntervalSec = msToSecondsGuarded(
+            preferences.getULong("ventCompMs", secondsToMs(loaded.ventCompensationUpdateIntervalSec)),
+            loaded.ventCompensationUpdateIntervalSec,
+            120UL
+        );
+    }
+    if (preferences.isKey("ventOffDelayS")) {
+        loaded.ventCompensationOffDelaySec = preferences.getULong("ventOffDelayS", loaded.ventCompensationOffDelaySec);
+    } else {
+        loaded.ventCompensationOffDelaySec = msToSecondsGuarded(
+            preferences.getULong("ventOffDelay", secondsToMs(loaded.ventCompensationOffDelaySec)),
+            loaded.ventCompensationOffDelaySec,
+            3600UL
+        );
+    }
     loaded.ventCompensationImmediateUp = preferences.getBool("ventImmUp", loaded.ventCompensationImmediateUp);
     loaded.ventCompensationImmediateDown = preferences.getBool("ventImmDown", loaded.ventCompensationImmediateDown);
     preferences.end();
@@ -332,28 +381,28 @@ bool ClimateAlgorithm::saveSettings() {
     putBoolChanged("fanAuto", settings.acFanAutoAllowed);
     putBoolChanged("acDynamic", settings.acDynamicControlEnabled);
     putFloatChanged("acCoolFullD", settings.acCoolingFullPowerDeltaC);
-    putFloatChanged("acCoolMinOff", settings.acCoolingMinTempOffsetC);
-    putFloatChanged("acCoolMaxOff", settings.acCoolingMaxTempOffsetC);
-    putFloatChanged("acCoolMinT", settings.acCoolingMinSetpointC);
+    putUCharChanged("acCoolMinOffI", settings.acCoolingMinTempOffsetC);
+    putUCharChanged("acCoolMaxOffI", settings.acCoolingMaxTempOffsetC);
+    putUCharChanged("acCoolMinTI", settings.acCoolingMinSetpointC);
     putUCharChanged("acCoolFanMin", settings.acCoolingMinFanSpeed);
     putUCharChanged("acCoolFanMax", settings.acCoolingMaxFanSpeed);
     putFloatChanged("acHeatFullD", settings.acHeatingFullPowerDeltaC);
-    putFloatChanged("acHeatMinOff", settings.acHeatingMinTempOffsetC);
-    putFloatChanged("acHeatMaxOff", settings.acHeatingMaxTempOffsetC);
-    putFloatChanged("acHeatMaxT", settings.acHeatingMaxSetpointC);
+    putUCharChanged("acHeatMinOffI", settings.acHeatingMinTempOffsetC);
+    putUCharChanged("acHeatMaxOffI", settings.acHeatingMaxTempOffsetC);
+    putUCharChanged("acHeatMaxTI", settings.acHeatingMaxSetpointC);
     putUCharChanged("acHeatFanMin", settings.acHeatingMinFanSpeed);
     putUCharChanged("acHeatFanMax", settings.acHeatingMaxFanSpeed);
     putULongChanged("decisionMs", settings.decisionIntervalMs);
     putULongChanged("holdMs", settings.minStateHoldMs);
-    putULongChanged("ventChkMs", settings.ventCoolingCheckIntervalMs);
+    putULongChanged("ventChkSec", settings.ventCoolingCheckIntervalSec);
     putFloatChanged("ventMinDrop", settings.ventCoolingMinDropC);
     putBoolChanged("ventStepFail", settings.ventCoolingStepUpOnFail);
     putBoolChanged("ventFbAc", settings.ventCoolingFallbackToAc);
     putBoolChanged("safeNoIndoor", settings.safeOnIndoorSensorMissing);
     putBoolChanged("safeEquip", settings.safeOnCriticalEquipmentError);
     putBoolChanged("diagVerbose", settings.diagnosticVerbose);
-    putULongChanged("ventCompMs", settings.ventCompensationUpdateIntervalMs);
-    putULongChanged("ventOffDelay", settings.ventCompensationOffDelayMs);
+    putULongChanged("ventCompSec", settings.ventCompensationUpdateIntervalSec);
+    putULongChanged("ventOffDelayS", settings.ventCompensationOffDelaySec);
     putBoolChanged("ventImmUp", settings.ventCompensationImmediateUp);
     putBoolChanged("ventImmDown", settings.ventCompensationImmediateDown);
     preferences.end();
@@ -440,7 +489,7 @@ ControllerActivity ClimateAlgorithm::calculateActivity() {
     if (status.needCooling) {
         if (canUseVentCooling()) {
             if (currentActivity == ControllerActivity::VentCool && ventCoolingCheckStartMs > 0) {
-                const bool checkDue = millis() - ventCoolingCheckStartMs >= settings.ventCoolingCheckIntervalMs;
+                const bool checkDue = millis() - ventCoolingCheckStartMs >= secondsToMs(settings.ventCoolingCheckIntervalSec);
                 if (checkDue) {
                     const float tempDrop = ventCoolingStartIndoorTempC - state->environment.indoorTempC;
                     if (tempDrop >= settings.ventCoolingMinDropC) {
@@ -532,7 +581,7 @@ void ClimateAlgorithm::applyActivity(ControllerActivity activity) {
 
 void ClimateAlgorithm::updateFastVentCompensation() {
     const unsigned long now = millis();
-    if (now - lastVentCompensationMs < settings.ventCompensationUpdateIntervalMs) return;
+    if (now - lastVentCompensationMs < secondsToMs(settings.ventCompensationUpdateIntervalSec)) return;
     lastVentCompensationMs = now;
     status.lastVentCompensationMs = now;
     if (!hasDecision) return;
@@ -550,7 +599,7 @@ void ClimateAlgorithm::updateVentRequirements(ControllerActivity activity) {
     if (rawExhaustCompStep >= heldExhaustCompRequirementStep || settings.ventCompensationImmediateDown) {
         heldExhaustCompRequirementStep = rawExhaustCompStep;
         exhaustCompDecreasePending = false;
-    } else if (settings.ventCompensationOffDelayMs == 0) {
+    } else if (settings.ventCompensationOffDelaySec == 0) {
         heldExhaustCompRequirementStep = rawExhaustCompStep;
         exhaustCompDecreasePending = false;
     } else {
@@ -559,7 +608,7 @@ void ClimateAlgorithm::updateVentRequirements(ControllerActivity activity) {
             exhaustCompDecreaseStartedMs = now;
         }
 
-        if (now - exhaustCompDecreaseStartedMs >= settings.ventCompensationOffDelayMs) {
+        if (now - exhaustCompDecreaseStartedMs >= secondsToMs(settings.ventCompensationOffDelaySec)) {
             heldExhaustCompRequirementStep = rawExhaustCompStep;
             exhaustCompDecreasePending = false;
         }
@@ -797,7 +846,8 @@ void ClimateAlgorithm::calculateDynamicCoolingAc(uint8_t& targetTemp, uint8_t& f
 
     const float offset = settings.acCoolingMinTempOffsetC
         + ratio * (settings.acCoolingMaxTempOffsetC - settings.acCoolingMinTempOffsetC);
-    targetTemp = clampAcSetpoint(max(settings.targetTempC - offset, settings.acCoolingMinSetpointC));
+    const int rawTarget = (int)floorf(settings.targetTempC - offset);
+    targetTemp = clampAcSetpoint(max(rawTarget, (int)settings.acCoolingMinSetpointC));
 }
 
 void ClimateAlgorithm::calculateDynamicHeatingAc(uint8_t& targetTemp, uint8_t& fanSpeed) {
@@ -815,7 +865,8 @@ void ClimateAlgorithm::calculateDynamicHeatingAc(uint8_t& targetTemp, uint8_t& f
 
     const float offset = settings.acHeatingMinTempOffsetC
         + ratio * (settings.acHeatingMaxTempOffsetC - settings.acHeatingMinTempOffsetC);
-    targetTemp = clampAcSetpoint(min(settings.targetTempC + offset, settings.acHeatingMaxSetpointC));
+    const int rawTarget = (int)ceilf(settings.targetTempC + offset);
+    targetTemp = clampAcSetpoint(min(rawTarget, (int)settings.acHeatingMaxSetpointC));
 }
 
 uint8_t ClimateAlgorithm::calculateAcFanSpeedForVfdStep(uint8_t vfdStep) const {

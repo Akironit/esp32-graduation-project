@@ -168,27 +168,27 @@ constexpr AutoSettingDescriptor AUTO_SETTINGS[] = {
     {AutoSettingId::AcFanAuto, "AC FAN", "acFanAutoAllowed", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
     {AutoSettingId::AcDynamic, "AC DYNAMIC", "acDynamicControl", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
     {AutoSettingId::AcCoolFullDelta, "AC DYNAMIC", "acCoolingFullDelta", AutoSettingType::Float, 0.1f, 10.0f, 0.1f, 0.5f, 1, "C"},
-    {AutoSettingId::AcCoolMinOffset, "AC DYNAMIC", "acCoolingMinOffset", AutoSettingType::Float, 0.0f, 8.0f, 0.1f, 0.5f, 1, "C"},
-    {AutoSettingId::AcCoolMaxOffset, "AC DYNAMIC", "acCoolingMaxOffset", AutoSettingType::Float, 0.0f, 10.0f, 0.1f, 0.5f, 1, "C"},
-    {AutoSettingId::AcCoolMinTemp, "AC DYNAMIC", "acCoolingMinSetpoint", AutoSettingType::Float, 16.0f, 30.0f, 1.0f, 2.0f, 0, "C"},
+    {AutoSettingId::AcCoolMinOffset, "AC DYNAMIC", "acCoolingMinTempOffsetC", AutoSettingType::UInt, 0.0f, 8.0f, 1.0f, 1.0f, 0, "C"},
+    {AutoSettingId::AcCoolMaxOffset, "AC DYNAMIC", "acCoolingMaxTempOffsetC", AutoSettingType::UInt, 0.0f, 10.0f, 1.0f, 1.0f, 0, "C"},
+    {AutoSettingId::AcCoolMinTemp, "AC DYNAMIC", "acCoolingMinSetpointC", AutoSettingType::UInt, 16.0f, 30.0f, 1.0f, 1.0f, 0, "C"},
     {AutoSettingId::AcCoolFanMin, "AC DYNAMIC", "acCoolingMinFan", AutoSettingType::UInt, 0, 4, 1, 1, 0, ""},
     {AutoSettingId::AcCoolFanMax, "AC DYNAMIC", "acCoolingMaxFan", AutoSettingType::UInt, 0, 4, 1, 1, 0, ""},
     {AutoSettingId::AcHeatFullDelta, "AC HEAT", "acHeatingFullDelta", AutoSettingType::Float, 0.1f, 10.0f, 0.1f, 0.5f, 1, "C"},
-    {AutoSettingId::AcHeatMinOffset, "AC HEAT", "acHeatingMinOffset", AutoSettingType::Float, 0.0f, 8.0f, 0.1f, 0.5f, 1, "C"},
-    {AutoSettingId::AcHeatMaxOffset, "AC HEAT", "acHeatingMaxOffset", AutoSettingType::Float, 0.0f, 10.0f, 0.1f, 0.5f, 1, "C"},
-    {AutoSettingId::AcHeatMaxTemp, "AC HEAT", "acHeatingMaxSetpoint", AutoSettingType::Float, 16.0f, 30.0f, 1.0f, 2.0f, 0, "C"},
+    {AutoSettingId::AcHeatMinOffset, "AC HEAT", "acHeatingMinTempOffsetC", AutoSettingType::UInt, 0.0f, 8.0f, 1.0f, 1.0f, 0, "C"},
+    {AutoSettingId::AcHeatMaxOffset, "AC HEAT", "acHeatingMaxTempOffsetC", AutoSettingType::UInt, 0.0f, 10.0f, 1.0f, 1.0f, 0, "C"},
+    {AutoSettingId::AcHeatMaxTemp, "AC HEAT", "acHeatingMaxSetpointC", AutoSettingType::UInt, 16.0f, 30.0f, 1.0f, 1.0f, 0, "C"},
     {AutoSettingId::AcHeatFanMin, "AC HEAT", "acHeatingMinFan", AutoSettingType::UInt, 0, 4, 1, 1, 0, ""},
     {AutoSettingId::AcHeatFanMax, "AC HEAT", "acHeatingMaxFan", AutoSettingType::UInt, 0, 4, 1, 1, 0, ""},
-    {AutoSettingId::DecisionInterval, "TIMING", "decisionIntervalMs", AutoSettingType::Milliseconds, 1000, 60000, 1000, 10000, 0, "ms"},
-    {AutoSettingId::MinStateHold, "TIMING", "minStateHoldMs", AutoSettingType::Milliseconds, 0, 3600000, 10000, 60000, 0, "ms"},
-    {AutoSettingId::VentCoolCheck, "TIMING", "ventCoolingCheckMs", AutoSettingType::Milliseconds, 60000, 21600000, 60000, 300000, 0, "ms"},
+    {AutoSettingId::DecisionInterval, "TIMING", "decisionIntervalSec", AutoSettingType::UInt, 1, 60, 5, 30, 0, "s"},
+    {AutoSettingId::MinStateHold, "TIMING", "minStateHoldSec", AutoSettingType::UInt, 0, 3600, 5, 60, 0, "s"},
+    {AutoSettingId::VentCoolCheck, "TIMING", "ventCoolingCheckIntervalSec", AutoSettingType::UInt, 60, 21600, 60, 600, 0, "s"},
     {AutoSettingId::VentCoolMinDrop, "TIMING", "ventCoolingMinDropC", AutoSettingType::Float, 0.0f, 5.0f, 0.1f, 0.5f, 1, "C"},
     {AutoSettingId::VentCoolStepUp, "TIMING", "ventCoolingStepUp", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
     {AutoSettingId::VentCoolFallback, "TIMING", "ventCoolingFallbackAc", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
     {AutoSettingId::SafeNoIndoor, "SAFETY", "safeOnIndoorMissing", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
     {AutoSettingId::SafeEquipment, "SAFETY", "safeOnEquipmentErr", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
-    {AutoSettingId::VentCompInterval, "FAST VENT", "ventCompIntervalMs", AutoSettingType::Milliseconds, 500, 10000, 500, 1000, 0, "ms"},
-    {AutoSettingId::VentCompOffDelay, "FAST VENT", "ventCompOffDelayMs", AutoSettingType::Milliseconds, 0, 300000, 1000, 60000, 0, "ms"},
+    {AutoSettingId::VentCompInterval, "FAST VENT", "ventCompensationUpdateIntervalSec", AutoSettingType::UInt, 1, 120, 1, 1, 0, "s"},
+    {AutoSettingId::VentCompOffDelay, "FAST VENT", "ventCompensationOffDelaySec", AutoSettingType::UInt, 0, 3600, 2, 60, 0, "s"},
     {AutoSettingId::VentCompUp, "FAST VENT", "ventCompImmediateUp", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
     {AutoSettingId::VentCompDown, "FAST VENT", "ventCompImmediateDown", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""}
 };
@@ -275,16 +275,16 @@ float getAutoSettingValue(const AutoControlSettings& settings, AutoSettingId id)
         case AutoSettingId::AcHeatMaxTemp: return settings.acHeatingMaxSetpointC;
         case AutoSettingId::AcHeatFanMin: return settings.acHeatingMinFanSpeed;
         case AutoSettingId::AcHeatFanMax: return settings.acHeatingMaxFanSpeed;
-        case AutoSettingId::DecisionInterval: return settings.decisionIntervalMs;
-        case AutoSettingId::MinStateHold: return settings.minStateHoldMs;
-        case AutoSettingId::VentCoolCheck: return settings.ventCoolingCheckIntervalMs;
+        case AutoSettingId::DecisionInterval: return settings.decisionIntervalMs / 1000.0f;
+        case AutoSettingId::MinStateHold: return settings.minStateHoldMs / 1000.0f;
+        case AutoSettingId::VentCoolCheck: return settings.ventCoolingCheckIntervalSec;
         case AutoSettingId::VentCoolMinDrop: return settings.ventCoolingMinDropC;
         case AutoSettingId::VentCoolStepUp: return settings.ventCoolingStepUpOnFail ? 1 : 0;
         case AutoSettingId::VentCoolFallback: return settings.ventCoolingFallbackToAc ? 1 : 0;
         case AutoSettingId::SafeNoIndoor: return settings.safeOnIndoorSensorMissing ? 1 : 0;
         case AutoSettingId::SafeEquipment: return settings.safeOnCriticalEquipmentError ? 1 : 0;
-        case AutoSettingId::VentCompInterval: return settings.ventCompensationUpdateIntervalMs;
-        case AutoSettingId::VentCompOffDelay: return settings.ventCompensationOffDelayMs;
+        case AutoSettingId::VentCompInterval: return settings.ventCompensationUpdateIntervalSec;
+        case AutoSettingId::VentCompOffDelay: return settings.ventCompensationOffDelaySec;
         case AutoSettingId::VentCompUp: return settings.ventCompensationImmediateUp ? 1 : 0;
         case AutoSettingId::VentCompDown: return settings.ventCompensationImmediateDown ? 1 : 0;
     }
@@ -294,7 +294,7 @@ float getAutoSettingValue(const AutoControlSettings& settings, AutoSettingId id)
 
 void setAutoSettingValue(AutoControlSettings& settings, AutoSettingId id, float value) {
     const uint8_t byteValue = (uint8_t)roundf(value);
-    const unsigned long msValue = (unsigned long)roundf(value);
+    const unsigned long wholeValue = (unsigned long)roundf(value);
     switch (id) {
         case AutoSettingId::AutoEnabled: settings.autoEnabled = value >= 0.5f; break;
         case AutoSettingId::DryRun: settings.dryRun = value >= 0.5f; break;
@@ -329,27 +329,27 @@ void setAutoSettingValue(AutoControlSettings& settings, AutoSettingId id, float 
         case AutoSettingId::AcFanAuto: settings.acFanAutoAllowed = value >= 0.5f; break;
         case AutoSettingId::AcDynamic: settings.acDynamicControlEnabled = value >= 0.5f; break;
         case AutoSettingId::AcCoolFullDelta: settings.acCoolingFullPowerDeltaC = value; break;
-        case AutoSettingId::AcCoolMinOffset: settings.acCoolingMinTempOffsetC = value; break;
-        case AutoSettingId::AcCoolMaxOffset: settings.acCoolingMaxTempOffsetC = value; break;
-        case AutoSettingId::AcCoolMinTemp: settings.acCoolingMinSetpointC = value; break;
+        case AutoSettingId::AcCoolMinOffset: settings.acCoolingMinTempOffsetC = byteValue; break;
+        case AutoSettingId::AcCoolMaxOffset: settings.acCoolingMaxTempOffsetC = byteValue; break;
+        case AutoSettingId::AcCoolMinTemp: settings.acCoolingMinSetpointC = byteValue; break;
         case AutoSettingId::AcCoolFanMin: settings.acCoolingMinFanSpeed = byteValue; break;
         case AutoSettingId::AcCoolFanMax: settings.acCoolingMaxFanSpeed = byteValue; break;
         case AutoSettingId::AcHeatFullDelta: settings.acHeatingFullPowerDeltaC = value; break;
-        case AutoSettingId::AcHeatMinOffset: settings.acHeatingMinTempOffsetC = value; break;
-        case AutoSettingId::AcHeatMaxOffset: settings.acHeatingMaxTempOffsetC = value; break;
-        case AutoSettingId::AcHeatMaxTemp: settings.acHeatingMaxSetpointC = value; break;
+        case AutoSettingId::AcHeatMinOffset: settings.acHeatingMinTempOffsetC = byteValue; break;
+        case AutoSettingId::AcHeatMaxOffset: settings.acHeatingMaxTempOffsetC = byteValue; break;
+        case AutoSettingId::AcHeatMaxTemp: settings.acHeatingMaxSetpointC = byteValue; break;
         case AutoSettingId::AcHeatFanMin: settings.acHeatingMinFanSpeed = byteValue; break;
         case AutoSettingId::AcHeatFanMax: settings.acHeatingMaxFanSpeed = byteValue; break;
-        case AutoSettingId::DecisionInterval: settings.decisionIntervalMs = msValue; break;
-        case AutoSettingId::MinStateHold: settings.minStateHoldMs = msValue; break;
-        case AutoSettingId::VentCoolCheck: settings.ventCoolingCheckIntervalMs = msValue; break;
+        case AutoSettingId::DecisionInterval: settings.decisionIntervalMs = wholeValue * 1000UL; break;
+        case AutoSettingId::MinStateHold: settings.minStateHoldMs = wholeValue * 1000UL; break;
+        case AutoSettingId::VentCoolCheck: settings.ventCoolingCheckIntervalSec = wholeValue; break;
         case AutoSettingId::VentCoolMinDrop: settings.ventCoolingMinDropC = value; break;
         case AutoSettingId::VentCoolStepUp: settings.ventCoolingStepUpOnFail = value >= 0.5f; break;
         case AutoSettingId::VentCoolFallback: settings.ventCoolingFallbackToAc = value >= 0.5f; break;
         case AutoSettingId::SafeNoIndoor: settings.safeOnIndoorSensorMissing = value >= 0.5f; break;
         case AutoSettingId::SafeEquipment: settings.safeOnCriticalEquipmentError = value >= 0.5f; break;
-        case AutoSettingId::VentCompInterval: settings.ventCompensationUpdateIntervalMs = msValue; break;
-        case AutoSettingId::VentCompOffDelay: settings.ventCompensationOffDelayMs = msValue; break;
+        case AutoSettingId::VentCompInterval: settings.ventCompensationUpdateIntervalSec = wholeValue; break;
+        case AutoSettingId::VentCompOffDelay: settings.ventCompensationOffDelaySec = wholeValue; break;
         case AutoSettingId::VentCompUp: settings.ventCompensationImmediateUp = value >= 0.5f; break;
         case AutoSettingId::VentCompDown: settings.ventCompensationImmediateDown = value >= 0.5f; break;
     }
