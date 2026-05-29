@@ -195,6 +195,34 @@ constexpr AutoSettingDescriptor AUTO_SETTINGS[] = {
 
 constexpr uint8_t AUTO_SETTINGS_COUNT = sizeof(AUTO_SETTINGS) / sizeof(AUTO_SETTINGS[0]);
 
+TempSensorRole tempRoleFromIndex(uint8_t index) {
+    switch (index % 4) {
+        case 0:
+            return TempSensorRole::Indoor;
+        case 1:
+            return TempSensorRole::Outdoor;
+        case 2:
+            return TempSensorRole::Unknown;
+        case 3:
+        default:
+            return TempSensorRole::Unused;
+    }
+}
+
+uint8_t tempRoleToIndex(TempSensorRole role) {
+    switch (role) {
+        case TempSensorRole::Indoor:
+            return 0;
+        case TempSensorRole::Outdoor:
+            return 1;
+        case TempSensorRole::Unknown:
+            return 2;
+        case TempSensorRole::Unused:
+        default:
+            return 3;
+    }
+}
+
 float clampAutoValue(float value, const AutoSettingDescriptor& descriptor) {
     if (value < descriptor.minValue) return descriptor.minValue;
     if (value > descriptor.maxValue) return descriptor.maxValue;
@@ -373,6 +401,7 @@ void DisplayUi::update(const DeviceState& state, const AutoControlSettings& auto
 void DisplayUi::nextPage() {
     const uint8_t next = (getPageIndex() + 1) % static_cast<uint8_t>(Page::Count);
     currentPage = static_cast<Page>(next);
+    tempPageMode = TempPageMode::View;
     dirty = true;
     fullRedraw = true;
     shellRedraw = true;
@@ -382,6 +411,7 @@ void DisplayUi::previousPage() {
     const uint8_t count = static_cast<uint8_t>(Page::Count);
     const uint8_t previous = (getPageIndex() + count - 1) % count;
     currentPage = static_cast<Page>(previous);
+    tempPageMode = TempPageMode::View;
     dirty = true;
     fullRedraw = true;
     shellRedraw = true;
@@ -394,6 +424,7 @@ void DisplayUi::setPage(Page page) {
 
     currentPage = page;
     interactionMode = InteractionMode::View;
+    tempPageMode = TempPageMode::View;
     dirty = true;
     fullRedraw = true;
     shellRedraw = true;
@@ -415,11 +446,16 @@ DisplayUi::Action DisplayUi::handleButton(Button button, bool longPress, DeviceS
     if (longPress && button == Button::Back) {
         currentPage = Page::Overview;
         interactionMode = InteractionMode::View;
+        tempPageMode = TempPageMode::View;
         dirty = true;
         fullRedraw = true;
         shellRedraw = true;
         Logger::debug(TAG_UI, "Long BACK: return to Overview");
         return {};
+    }
+
+    if (currentPage == Page::Temperatures) {
+        return handleTemperatureButton(button, longPress, state.temperatures);
     }
 
     if (interactionMode == InteractionMode::View) {
@@ -887,33 +923,199 @@ void DisplayUi::drawOverview(const DeviceState& state) {
 }
 
 void DisplayUi::drawTemperatures(const TemperatureStateSnapshot& temperatures) {
-    const uint8_t count = temperatures.sensorCount;
-
     if (fullRedraw) {
-        drawPanel(10, 42, 300, 42, COLOR_ACCENT);
-        drawPanel(10, 94, 300, 114, COLOR_OK);
+        tft.drawRoundRect(8, 28, 304, 182, 6, COLOR_ACCENT);
+        tempPageCacheValid = false;
     }
 
-    drawTextBox(0, 22, 52, 135, "DS18B20 BUS", COLOR_MUTED, 1);
-    drawTextBox(1, 170, 52, 125, String(count) + " sensor(s)", count > 0 ? COLOR_OK : COLOR_WARN, 2);
+    drawTemperatureList(temperatures);
+}
+
+void DisplayUi::drawTemperatureList(const TemperatureStateSnapshot& temperatures) {
+    const uint8_t count = temperatures.sensorCount;
+    if (count > 0 && selectedTempSensor >= count) {
+        selectedTempSensor = count - 1;
+    } else if (count == 0) {
+        selectedTempSensor = 0;
+    }
+
+    if (selectedTempSensor < tempSensorScroll) {
+        tempSensorScroll = selectedTempSensor;
+    } else if (selectedTempSensor >= tempSensorScroll + TEMP_VISIBLE_ROWS) {
+        tempSensorScroll = selectedTempSensor - TEMP_VISIBLE_ROWS + 1;
+    }
+
+    const bool modeChanged = !tempPageCacheValid || lastTempPageMode != tempPageMode;
+    const bool rangeChanged = !tempPageCacheValid || lastTempVisibleStart != tempSensorScroll || lastTempCount != count;
+    const bool selectionChanged = !tempPageCacheValid || lastTempSelectedIndex != selectedTempSensor || lastTempMenuIndex != selectedTempMenu || lastTempRoleIndex != selectedTempRole;
+
+    if (modeChanged || rangeChanged) {
+        tft.fillRect(12, 32, 296, 180, COLOR_BG);
+        for (uint8_t row = 0; row < TEMP_VISIBLE_ROWS; row++) {
+            lastTempRowIndex[row] = 255;
+            lastTempRowText[row] = "";
+            lastTempRowSelected[row] = false;
+        }
+        lastTempInfoText = "";
+        lastTempHintText = "";
+    }
+
+    tft.setFreeFont(nullptr);
+    tft.setTextSize(1);
+    tft.setTextFont(2);
+    tft.setTextColor(COLOR_TITLE, COLOR_BG);
+    if (modeChanged || rangeChanged || selectionChanged) {
+        tft.fillRect(14, 32, 292, 18, COLOR_BG);
+        const char* title = tempPageMode == TempPageMode::Config ? "TEMP CONFIG"
+            : (tempPageMode == TempPageMode::Menu ? "SENSOR MENU"
+            : (tempPageMode == TempPageMode::EditRole ? "ASSIGN ROLE"
+            : (tempPageMode == TempPageMode::ConfirmForget ? "FORGET SENSOR?" : "TEMP SENSORS")));
+        tft.drawString(title, 18, 32);
+        tft.setTextColor(COLOR_WARN, COLOR_BG);
+        tft.drawRightString(String(count) + " known", 302, 32, 2);
+    }
 
     if (count == 0) {
-        drawTextBox(2, 22, 108, 260, "No DS18B20 sensors found", COLOR_WARN, 2);
+        const String line = "No sensors";
+        if (!tempPageCacheValid || lastTempRowText[0] != line) {
+            tft.fillRect(12, 74, 296, 24, COLOR_BG);
+            tft.setTextFont(2);
+            tft.setTextColor(COLOR_WARN, COLOR_BG);
+            tft.drawString(line, 20, 76);
+            lastTempRowText[0] = line;
+        }
+
+        const String hint = "LEFT/RIGHT page  OK scan";
+        if (!tempPageCacheValid || lastTempHintText != hint) {
+            lastTempHintText = hint;
+            tft.fillRect(14, 198, 292, 14, COLOR_BG);
+            tft.setTextFont(1);
+            tft.setTextColor(COLOR_WARN, COLOR_BG);
+            tft.drawString(hint, 18, 201);
+        }
+
+        lastTempPageMode = tempPageMode;
+        lastTempVisibleStart = tempSensorScroll;
+        lastTempSelectedIndex = selectedTempSensor;
+        lastTempCount = count;
+        tempPageCacheValid = true;
         return;
     }
 
-    for (uint8_t i = 0; i < 4; i++) {
-        const int y = 106 + i * 24;
-
-        if (i >= count) {
-            drawTextBox(2 + i, 22, y, 260, String("Sensor ") + String(i) + ": not present", COLOR_MUTED, 2);
-            continue;
+    if (tempPageMode == TempPageMode::Menu) {
+        static constexpr const char* MENU_ITEMS[] = {"Assign role", "Force read", "Scan bus", "Swap IN/OUT", "Forget sensor", "Back"};
+        for (uint8_t row = 0; row < 6; row++) {
+            const int y = 52 + row * 22;
+            const bool selected = row == selectedTempMenu;
+            const String rowText = String(selected ? "> " : "  ") + MENU_ITEMS[row];
+            if (!tempPageCacheValid || modeChanged || selectionChanged || lastTempRowText[row] != rowText || lastTempRowSelected[row] != selected) {
+                lastTempRowText[row] = rowText;
+                lastTempRowSelected[row] = selected;
+                tft.fillRect(10, y - 5, 300, 26, COLOR_BG);
+                tft.setTextFont(2);
+                tft.setTextColor(selected ? COLOR_TEXT : COLOR_MUTED, COLOR_BG);
+                tft.drawString(rowText, 22, y);
+            }
         }
+    } else if (tempPageMode == TempPageMode::EditRole) {
+        static constexpr TempSensorRole ROLES[] = {TempSensorRole::Indoor, TempSensorRole::Outdoor, TempSensorRole::Unknown, TempSensorRole::Unused};
+        for (uint8_t row = 0; row < 4; row++) {
+            const int y = 64 + row * 28;
+            const bool selected = row == selectedTempRole;
+            const String rowText = String(selected ? "> " : "  ") + tempRoleTitle(ROLES[row]);
+            if (!tempPageCacheValid || modeChanged || selectionChanged || lastTempRowText[row] != rowText || lastTempRowSelected[row] != selected) {
+                lastTempRowText[row] = rowText;
+                lastTempRowSelected[row] = selected;
+                tft.fillRect(10, y - 7, 300, 30, COLOR_BG);
+                tft.setTextFont(2);
+                tft.setTextColor(selected ? COLOR_TITLE : COLOR_MUTED, COLOR_BG);
+                tft.drawString(rowText, 22, y);
+            }
+        }
+    } else if (tempPageMode == TempPageMode::ConfirmForget) {
+        const TemperatureStateSnapshot::Sensor& sensor = temperatures.sensors[selectedTempSensor];
+        const String rowText = "Forget " + tempShortAddress(sensor.address) + "?";
+        if (!tempPageCacheValid || modeChanged || lastTempRowText[0] != rowText) {
+            lastTempRowText[0] = rowText;
+            tft.fillRect(12, 82, 296, 42, COLOR_BG);
+            tft.setTextFont(2);
+            tft.setTextColor(COLOR_DANGER, COLOR_BG);
+            tft.drawString(rowText, 22, 86);
+            tft.setTextColor(COLOR_WARN, COLOR_BG);
+            tft.drawString("OK: yes   BACK: no", 22, 112);
+        }
+    } else {
+        for (uint8_t row = 0; row < TEMP_VISIBLE_ROWS; row++) {
+            const uint8_t index = tempSensorScroll + row;
+            const int y = 52 + row * 20;
 
-        const float value = temperatures.values[i];
-        const uint16_t color = value == DEVICE_DISCONNECTED_C ? COLOR_WARN : COLOR_TEXT;
-        drawTextBox(2 + i, 22, y, 260, "Sensor " + String(i) + ": " + formatFloat(value, 2) + " C", color, 2);
+            if (index >= count) {
+                if (!tempPageCacheValid || lastTempRowIndex[row] != 255) {
+                    tft.fillRect(12, y - 2, 296, 20, COLOR_BG);
+                    lastTempRowIndex[row] = 255;
+                    lastTempRowText[row] = "";
+                    lastTempRowSelected[row] = false;
+                }
+                continue;
+            }
+
+            const TemperatureStateSnapshot::Sensor& sensor = temperatures.sensors[index];
+            const bool selected = tempPageMode == TempPageMode::Config && index == selectedTempSensor;
+            const char* status = !sensor.enabled ? "OFF" : (sensor.connected && sensor.hasTemperature ? "OK" : (sensor.connected ? "ERR" : "LOST"));
+            const String tempText = sensor.hasTemperature ? String(sensor.temperatureC, 1) + "C" : "--.-C";
+            const String rowText = String(index) + " " + tempRoleShort(sensor.role) + " " + tempText + " " + status;
+            const bool rowChanged = rangeChanged || selectionChanged || !tempPageCacheValid || lastTempRowIndex[row] != index || lastTempRowText[row] != rowText || lastTempRowSelected[row] != selected;
+            if (!rowChanged) continue;
+
+            lastTempRowIndex[row] = index;
+            lastTempRowText[row] = rowText;
+            lastTempRowSelected[row] = selected;
+
+            tft.fillRect(10, y - 5, 300, 26, COLOR_BG);
+            tft.setTextFont(2);
+            tft.setTextColor(selected ? COLOR_TEXT : (sensor.enabled ? COLOR_MUTED : COLOR_MUTED), COLOR_BG);
+            tft.drawString(selected ? ">" : " ", 18, y);
+            tft.setTextColor(sensor.role == TempSensorRole::Unknown ? COLOR_WARN : (sensor.role == TempSensorRole::Unused ? COLOR_MUTED : COLOR_OK), COLOR_BG);
+            tft.drawString(String(index) + " " + tempRoleShort(sensor.role), 34, y);
+            tft.setTextColor(sensor.hasTemperature ? COLOR_TEXT : COLOR_WARN, COLOR_BG);
+            tft.drawString(tempText, 122, y);
+            tft.setTextColor((sensor.connected && sensor.hasTemperature) ? COLOR_OK : COLOR_WARN, COLOR_BG);
+            tft.drawRightString(status, 300, y, 2);
+            if (selected) {
+                tft.drawFastHLine(16, y + 17, 288, COLOR_ACCENT);
+            }
+        }
     }
+
+    const TemperatureStateSnapshot::Sensor& selectedSensor = temperatures.sensors[selectedTempSensor];
+    const String info = tempShortAddress(selectedSensor.address) + "  miss=" + String(selectedSensor.missedScanCount) + " fail=" + String(selectedSensor.failedReadCount);
+    if (!tempPageCacheValid || lastTempInfoText != info || modeChanged || selectionChanged) {
+        lastTempInfoText = info;
+        tft.fillRect(14, 180, 292, 14, COLOR_BG);
+        tft.setTextFont(1);
+        tft.setTextColor(COLOR_TEXT, COLOR_BG);
+        tft.drawString(info, 18, 183);
+    }
+
+    const char* hint = tempPageMode == TempPageMode::Menu ? "LEFT/RIGHT item  OK run  BACK list"
+        : (tempPageMode == TempPageMode::EditRole ? "LEFT/RIGHT role  OK apply  BACK cancel"
+        : (tempPageMode == TempPageMode::ConfirmForget ? "OK yes  BACK no"
+        : (tempPageMode == TempPageMode::Config ? "LEFT/RIGHT sensor  OK menu  BACK view" : "LEFT/RIGHT page  OK config")));
+    if (!tempPageCacheValid || lastTempHintText != hint || modeChanged) {
+        lastTempHintText = hint;
+        tft.fillRect(14, 198, 292, 16, COLOR_BG);
+        tft.setTextFont(1);
+        tft.setTextColor(COLOR_WARN, COLOR_BG);
+        tft.drawString(hint, 18, 200);
+    }
+
+    lastTempPageMode = tempPageMode;
+    lastTempVisibleStart = tempSensorScroll;
+    lastTempSelectedIndex = selectedTempSensor;
+    lastTempMenuIndex = selectedTempMenu;
+    lastTempRoleIndex = selectedTempRole;
+    lastTempCount = count;
+    tempPageCacheValid = true;
 }
 
 void DisplayUi::drawAirConditioner(const AcStateSnapshot& ac) {
@@ -1721,6 +1923,257 @@ DisplayUi::Action DisplayUi::applyAutoSettingsEdit(const AutoControlSettings& au
     return action;
 }
 
+DisplayUi::Action DisplayUi::handleTemperatureButton(Button button, bool longPress, const TemperatureStateSnapshot& temperatures) {
+    Action action;
+
+    if (longPress) {
+        return action;
+    }
+
+    const uint8_t count = temperatures.sensorCount;
+    if (count == 0) {
+        switch (button) {
+            case Button::Left:
+                previousPage();
+                Logger::debug(TAG_UI, "TEMP VIEW: page previous");
+                break;
+            case Button::Right:
+                nextPage();
+                Logger::debug(TAG_UI, "TEMP VIEW: page next");
+                break;
+            case Button::Ok:
+                action.type = ActionType::TempScan;
+                tempPageMode = TempPageMode::View;
+                tempPageCacheValid = false;
+                dirty = true;
+                fullRedraw = false;
+                Logger::info(TAG_UI, "Temperature scan requested from display");
+                break;
+            case Button::Back:
+                currentPage = Page::Overview;
+                tempPageMode = TempPageMode::View;
+                dirty = true;
+                fullRedraw = true;
+                shellRedraw = true;
+                Logger::debug(TAG_UI, "TEMP BACK: return to Overview");
+                break;
+        }
+        return action;
+    }
+
+    if (selectedTempSensor >= count) {
+        selectedTempSensor = count - 1;
+    }
+
+    switch (tempPageMode) {
+        case TempPageMode::View:
+            switch (button) {
+                case Button::Left:
+                    previousPage();
+                    Logger::debug(TAG_UI, "TEMP VIEW: page previous");
+                    break;
+                case Button::Right:
+                    nextPage();
+                    Logger::debug(TAG_UI, "TEMP VIEW: page next");
+                    break;
+                case Button::Ok:
+                    tempPageMode = TempPageMode::Config;
+                    tempPageCacheValid = false;
+                    dirty = true;
+                    fullRedraw = false;
+                    Logger::debug(TAG_UI, "TEMP CONFIG mode entered");
+                    break;
+                case Button::Back:
+                    currentPage = Page::Overview;
+                    dirty = true;
+                    fullRedraw = true;
+                    shellRedraw = true;
+                    Logger::debug(TAG_UI, "TEMP VIEW BACK: return to Overview");
+                    break;
+            }
+            break;
+
+        case TempPageMode::Config:
+            switch (button) {
+                case Button::Left:
+                    selectedTempSensor = selectedTempSensor == 0 ? count - 1 : selectedTempSensor - 1;
+                    dirty = true;
+                    fullRedraw = false;
+                    Logger::debugf(TAG_UI, "Selected temp sensor: %u", selectedTempSensor);
+                    break;
+                case Button::Right:
+                    selectedTempSensor = (selectedTempSensor + 1) % count;
+                    dirty = true;
+                    fullRedraw = false;
+                    Logger::debugf(TAG_UI, "Selected temp sensor: %u", selectedTempSensor);
+                    break;
+                case Button::Ok:
+                    tempPageMode = TempPageMode::Menu;
+                    selectedTempMenu = 0;
+                    tempPageCacheValid = false;
+                    dirty = true;
+                    fullRedraw = false;
+                    Logger::debug(TAG_UI, "TEMP menu opened");
+                    break;
+                case Button::Back:
+                    tempPageMode = TempPageMode::View;
+                    tempPageCacheValid = false;
+                    dirty = true;
+                    fullRedraw = false;
+                    Logger::debug(TAG_UI, "TEMP CONFIG mode canceled");
+                    break;
+            }
+            break;
+
+        case TempPageMode::Menu:
+            switch (button) {
+                case Button::Left:
+                    selectedTempMenu = selectedTempMenu == 0 ? 5 : selectedTempMenu - 1;
+                    dirty = true;
+                    fullRedraw = false;
+                    break;
+                case Button::Right:
+                    selectedTempMenu = (selectedTempMenu + 1) % 6;
+                    dirty = true;
+                    fullRedraw = false;
+                    break;
+                case Button::Ok:
+                    return applyTemperatureMenuAction(temperatures);
+                case Button::Back:
+                    tempPageMode = TempPageMode::Config;
+                    tempPageCacheValid = false;
+                    dirty = true;
+                    fullRedraw = false;
+                    break;
+            }
+            break;
+
+        case TempPageMode::EditRole:
+            switch (button) {
+                case Button::Left:
+                    selectedTempRole = selectedTempRole == 0 ? 3 : selectedTempRole - 1;
+                    dirty = true;
+                    fullRedraw = false;
+                    break;
+                case Button::Right:
+                    selectedTempRole = (selectedTempRole + 1) % 4;
+                    dirty = true;
+                    fullRedraw = false;
+                    break;
+                case Button::Ok:
+                    return applyTemperatureRole(temperatures);
+                case Button::Back:
+                    tempPageMode = TempPageMode::Menu;
+                    tempPageCacheValid = false;
+                    dirty = true;
+                    fullRedraw = false;
+                    Logger::debug(TAG_UI, "TEMP role edit canceled");
+                    break;
+            }
+            break;
+
+        case TempPageMode::ConfirmForget:
+            switch (button) {
+                case Button::Ok:
+                    action.type = ActionType::TempForget;
+                    action.uintValue = selectedTempSensor;
+                    tempPageMode = TempPageMode::Config;
+                    tempPageCacheValid = false;
+                    dirty = true;
+                    fullRedraw = false;
+                    Logger::infof(TAG_UI, "Temperature sensor forget requested: %u", selectedTempSensor);
+                    break;
+                case Button::Back:
+                    tempPageMode = TempPageMode::Menu;
+                    tempPageCacheValid = false;
+                    dirty = true;
+                    fullRedraw = false;
+                    break;
+                case Button::Left:
+                case Button::Right:
+                    break;
+            }
+            break;
+    }
+
+    return action;
+}
+
+DisplayUi::Action DisplayUi::applyTemperatureMenuAction(const TemperatureStateSnapshot& temperatures) {
+    Action action;
+    if (temperatures.sensorCount == 0) {
+        return action;
+    }
+
+    switch (selectedTempMenu) {
+        case 0:
+            selectedTempRole = tempRoleToIndex(temperatures.sensors[selectedTempSensor].role);
+            tempPageMode = TempPageMode::EditRole;
+            tempPageCacheValid = false;
+            dirty = true;
+            fullRedraw = false;
+            Logger::debug(TAG_UI, "TEMP role editor opened");
+            break;
+        case 1:
+            action.type = ActionType::TempForceRead;
+            tempPageMode = TempPageMode::Config;
+            tempPageCacheValid = false;
+            dirty = true;
+            fullRedraw = false;
+            Logger::info(TAG_UI, "Temperature force read requested from display");
+            break;
+        case 2:
+            action.type = ActionType::TempScan;
+            tempPageMode = TempPageMode::Config;
+            tempPageCacheValid = false;
+            dirty = true;
+            fullRedraw = false;
+            Logger::info(TAG_UI, "Temperature scan requested from display");
+            break;
+        case 3:
+            action.type = ActionType::TempSwap;
+            tempPageMode = TempPageMode::Config;
+            tempPageCacheValid = false;
+            dirty = true;
+            fullRedraw = false;
+            Logger::info(TAG_UI, "Temperature role swap requested from display");
+            break;
+        case 4:
+            tempPageMode = TempPageMode::ConfirmForget;
+            tempPageCacheValid = false;
+            dirty = true;
+            fullRedraw = false;
+            break;
+        case 5:
+        default:
+            tempPageMode = TempPageMode::Config;
+            tempPageCacheValid = false;
+            dirty = true;
+            fullRedraw = false;
+            break;
+    }
+
+    return action;
+}
+
+DisplayUi::Action DisplayUi::applyTemperatureRole(const TemperatureStateSnapshot& temperatures) {
+    Action action;
+    if (temperatures.sensorCount == 0 || selectedTempSensor >= temperatures.sensorCount) {
+        return action;
+    }
+
+    const TempSensorRole role = tempRoleFromIndex(selectedTempRole);
+    action.type = ActionType::TempAssignRole;
+    action.uintValue = selectedTempSensor;
+    action.tempRole = role;
+    tempPageMode = TempPageMode::Config;
+    tempPageCacheValid = false;
+    dirty = true;
+    fullRedraw = false;
+    Logger::infof(TAG_UI, "Temperature role selected from display: sensor=%u role=%s", selectedTempSensor, tempRoleTitle(role));
+    return action;
+}
+
 bool DisplayUi::isOverviewParamAvailable(const DeviceState& state, OverviewParam param) const {
     if (param == OverviewParam::Mode || param == OverviewParam::SetTemp) {
         return true;
@@ -1884,6 +2337,48 @@ const char* DisplayUi::acFanTitle(uint8_t fanMode) const {
         default:
             return "Unk";
     }
+}
+
+const char* DisplayUi::tempRoleShort(TempSensorRole role) const {
+    switch (role) {
+        case TempSensorRole::Indoor:
+            return "IN";
+        case TempSensorRole::Outdoor:
+            return "OUT";
+        case TempSensorRole::Unused:
+            return "OFF";
+        case TempSensorRole::Unknown:
+        default:
+            return "UNK";
+    }
+}
+
+const char* DisplayUi::tempRoleTitle(TempSensorRole role) const {
+    switch (role) {
+        case TempSensorRole::Indoor:
+            return "Indoor";
+        case TempSensorRole::Outdoor:
+            return "Outdoor";
+        case TempSensorRole::Unused:
+            return "Unused";
+        case TempSensorRole::Unknown:
+        default:
+            return "Unknown";
+    }
+}
+
+String DisplayUi::tempShortAddress(const DeviceAddress& address) const {
+    char buffer[16];
+    snprintf(
+        buffer,
+        sizeof(buffer),
+        "%02X%02X...%02X%02X",
+        address[0],
+        address[1],
+        address[6],
+        address[7]
+    );
+    return String(buffer);
 }
 
 const char* DisplayUi::vfdRunName(const char* lastAction) const {

@@ -267,6 +267,19 @@ void App::updateDeviceState() {
     state.temperatures.sensorCount = tempSensors.getSensorCount();
     for (uint8_t i = 0; i < TEMP_MAX_SENSORS; i++) {
         state.temperatures.values[i] = tempSensors.getTemperatureC(i);
+        const TempSensorEntry* entry = tempSensors.getEntry(i);
+        if (entry != nullptr) {
+            memcpy(state.temperatures.sensors[i].address, entry->address, sizeof(DeviceAddress));
+            state.temperatures.sensors[i].role = entry->role;
+            state.temperatures.sensors[i].enabled = entry->enabled;
+            state.temperatures.sensors[i].connected = entry->connected;
+            state.temperatures.sensors[i].hasTemperature = entry->hasTemperature;
+            state.temperatures.sensors[i].temperatureC = entry->temperatureC;
+            state.temperatures.sensors[i].missedScanCount = entry->missedScanCount;
+            state.temperatures.sensors[i].failedReadCount = entry->failedReadCount;
+        } else {
+            state.temperatures.sensors[i] = {};
+        }
     }
     state.environment.hasIndoorTemp = tempSensors.getTemperatureByRole(TempSensorRole::Indoor, state.environment.indoorTempC);
     state.environment.hasOutdoorTemp = tempSensors.getTemperatureByRole(TempSensorRole::Outdoor, state.environment.outdoorTempC);
@@ -531,6 +544,29 @@ void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
             break;
         case DisplayUi::ActionType::AutoSettings:
             climateAlgorithm.setSettings(action.autoSettings);
+            break;
+        case DisplayUi::ActionType::TempAssignRole:
+            if (!tempSensors.assignRole(action.uintValue, action.tempRole)) {
+                Logger::warningf(TAG_SETTINGS, "Temperature role assign failed: index=%u", action.uintValue);
+            }
+            break;
+        case DisplayUi::ActionType::TempForget:
+            if (!tempSensors.forget(action.uintValue)) {
+                Logger::warningf(TAG_SETTINGS, "Temperature sensor forget failed: index=%u", action.uintValue);
+            }
+            break;
+        case DisplayUi::ActionType::TempForceRead:
+            tempSensors.forceRead();
+            Logger::info(TAG_SETTINGS, "Temperature force read requested");
+            break;
+        case DisplayUi::ActionType::TempScan:
+            tempSensors.rescan();
+            Logger::info(TAG_SETTINGS, "Temperature bus scan requested");
+            break;
+        case DisplayUi::ActionType::TempSwap:
+            if (!tempSensors.swapRoles()) {
+                Logger::warning(TAG_SETTINGS, "Temperature role swap failed");
+            }
             break;
         case DisplayUi::ActionType::None:
             break;

@@ -35,7 +35,12 @@ public:
         VfdStop,
         VfdForward,
         VfdSetFrequency,
-        AutoSettings
+        AutoSettings,
+        TempAssignRole,
+        TempForget,
+        TempForceRead,
+        TempScan,
+        TempSwap
     };
 
     struct Action {
@@ -45,6 +50,7 @@ public:
         uint8_t uintValue = 0;
         float floatValue = 0.0f;
         AutoControlSettings autoSettings;
+        TempSensorRole tempRole = TempSensorRole::Unknown;
     };
 
     void begin();
@@ -86,6 +92,18 @@ private:
     uint8_t selectedAutoSetting = 0;
     uint8_t autoSettingsScroll = 0;
     float autoEditValue = 0.0f;
+    enum class TempPageMode : uint8_t {
+        View,
+        Config,
+        Menu,
+        EditRole,
+        ConfirmForget
+    };
+    TempPageMode tempPageMode = TempPageMode::View;
+    uint8_t selectedTempSensor = 0;
+    uint8_t tempSensorScroll = 0;
+    uint8_t selectedTempMenu = 0;
+    uint8_t selectedTempRole = 0;
     bool ready = false;
     bool dirty = true;
     bool fullRedraw = true;
@@ -103,6 +121,7 @@ private:
     static constexpr unsigned long RENDER_INTERVAL_MS = 1000;
     static constexpr uint8_t LINE_CACHE_SIZE = 40;
     static constexpr uint8_t AUTO_VISIBLE_ROWS = 8;
+    static constexpr uint8_t TEMP_VISIBLE_ROWS = 6;
     String lineCache[LINE_CACHE_SIZE];
     uint16_t lineColorCache[LINE_CACHE_SIZE] = {};
     bool autoPageCacheValid = false;
@@ -115,6 +134,18 @@ private:
     bool lastAutoRowSelected[AUTO_VISIBLE_ROWS] = {};
     bool lastAutoRowEdit[AUTO_VISIBLE_ROWS] = {};
     String lastAutoRowValue[AUTO_VISIBLE_ROWS];
+    bool tempPageCacheValid = false;
+    TempPageMode lastTempPageMode = TempPageMode::View;
+    uint8_t lastTempVisibleStart = 255;
+    uint8_t lastTempSelectedIndex = 255;
+    uint8_t lastTempMenuIndex = 255;
+    uint8_t lastTempRoleIndex = 255;
+    uint8_t lastTempCount = 255;
+    uint8_t lastTempRowIndex[TEMP_VISIBLE_ROWS] = {};
+    bool lastTempRowSelected[TEMP_VISIBLE_ROWS] = {};
+    String lastTempRowText[TEMP_VISIBLE_ROWS];
+    String lastTempInfoText;
+    String lastTempHintText;
 
     void render(const DeviceState& state, const AutoControlSettings& autoSettings);
 
@@ -149,6 +180,7 @@ private:
     void drawOverviewSelection(const DeviceState& state);
     void drawParamFrame(OverviewParam param, uint16_t color);
     void drawAutoSettingsList(const AutoControlSettings& autoSettings);
+    void drawTemperatureList(const TemperatureStateSnapshot& temperatures);
 
     void enterSelectMode(DeviceState& state);
     void enterEditMode(const DeviceState& state);
@@ -157,11 +189,17 @@ private:
     void changeEditValue(int8_t direction);
     Action applyEdit(DeviceState& state);
     Action handleAutoSettingsButton(Button button, bool longPress, const AutoControlSettings& autoSettings);
+    Action handleTemperatureButton(Button button, bool longPress, const TemperatureStateSnapshot& temperatures);
     void enterAutoSettingsSelect();
     void enterAutoSettingsEdit(const AutoControlSettings& autoSettings);
     void moveAutoSettingsSelection(int8_t direction);
     void changeAutoSettingsValue(int8_t direction, bool fast);
     Action applyAutoSettingsEdit(const AutoControlSettings& autoSettings);
+    Action applyTemperatureMenuAction(const TemperatureStateSnapshot& temperatures);
+    Action applyTemperatureRole(const TemperatureStateSnapshot& temperatures);
+    const char* tempRoleShort(TempSensorRole role) const;
+    const char* tempRoleTitle(TempSensorRole role) const;
+    String tempShortAddress(const DeviceAddress& address) const;
     bool isOverviewParamAvailable(const DeviceState& state, OverviewParam param) const;
     OverviewParam firstAvailableOverviewParam(const DeviceState& state) const;
     uint8_t acModeListIndex(uint8_t mode) const;

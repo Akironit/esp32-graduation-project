@@ -25,8 +25,20 @@ struct AcStateSnapshot {
 };
 
 struct TemperatureStateSnapshot {
+    struct Sensor {
+        DeviceAddress address = {};
+        TempSensorRole role = TempSensorRole::Unknown;
+        bool enabled = true;
+        bool connected = false;
+        bool hasTemperature = false;
+        float temperatureC = DEVICE_DISCONNECTED_C;
+        uint8_t missedScanCount = 0;
+        uint8_t failedReadCount = 0;
+    };
+
     uint8_t sensorCount = 0;
     float values[TEMP_MAX_SENSORS] = {};
+    Sensor sensors[TEMP_MAX_SENSORS];
 };
 
 struct VfdStateSnapshot {
