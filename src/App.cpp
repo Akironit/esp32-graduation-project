@@ -196,12 +196,7 @@ bool App::updateVfdCommandSync() {
     );
 
     if (!state.settings.manualVfdPower) {
-        controller.vfdStop("auto", vfdCommandSyncActive);
-        return true;
-    }
-
-    if (!vfd.isRunning()) {
-        controller.vfdForward("auto", vfdCommandSyncActive);
+        controller.vfdStop("display-sync", vfdCommandSyncActive);
         return true;
     }
 
@@ -211,16 +206,28 @@ bool App::updateVfdCommandSync() {
     }
 
     const float desiredHz = vfdStepToHz(state.settings.manualVfdStep);
-    const bool frequencyMatches = vfd.hasActualFrequency()
+    const bool requestedFrequencyMatches = vfd.hasRequestedFrequency()
+        && fabsf(vfd.getRequestedFrequencyHz() - desiredHz) <= 0.5f;
+    const bool actualFrequencyMatches = vfd.hasActualFrequency()
         && fabsf(vfd.getActualFrequencyHz() - desiredHz) <= 0.75f;
 
-    if (!frequencyMatches) {
-        controller.vfdSetFrequency(desiredHz, "auto", vfdCommandSyncActive);
+    if (!requestedFrequencyMatches && (!vfd.isRunning() || !actualFrequencyMatches)) {
+        controller.vfdSetFrequency(desiredHz, "display-sync", vfdCommandSyncActive);
         return true;
     }
 
-    controller.vfdForward("auto", vfdCommandSyncActive);
-    return true;
+    if (!vfd.isRunning()) {
+        controller.vfdForward("display-sync", vfdCommandSyncActive);
+        return true;
+    }
+
+    if (!actualFrequencyMatches) {
+        controller.vfdSetFrequency(desiredHz, "display-sync", vfdCommandSyncActive);
+        return true;
+    }
+
+    vfdCommandSyncActive = false;
+    return false;
 }
 
 

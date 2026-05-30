@@ -902,12 +902,13 @@ void DisplayUi::drawOverview(const DeviceState& state) {
     drawFontTextBox(25, 82, 194, 24, 16, "Fan", 2, COLOR_MUTED);
     drawFreeTextBox(26, 110, 192, 44, 18, acFanTitle(shownAcFan), valueFont, COLOR_TEXT);
 
+    const uint8_t overviewVfdErrors = state.vfd.consecutiveErrorCount;
     const char* vfdLink = "Wait";
     uint16_t vfdLinkColor = COLOR_WARN;
-    if (state.vfd.communicationError) {
+    if (overviewVfdErrors >= 5) {
         vfdLink = "Error";
         vfdLinkColor = COLOR_DANGER;
-    } else if (state.vfd.consecutiveErrorCount > 0) {
+    } else if (overviewVfdErrors >= 3) {
         vfdLink = "Wait";
         vfdLinkColor = COLOR_WARN;
     } else if (state.vfd.everOnline || state.vfd.online) {

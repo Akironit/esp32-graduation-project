@@ -769,53 +769,126 @@ void ClimateAlgorithm::applyDesiredState() {
         }
     }
 
+    auto noteVfdCommand = [&](const char* action, const char* reason, bool accepted) {
+        status.vfdAutoCommandAttempts++;
+        if (accepted) {
+            status.vfdAutoCommandAccepted++;
+        }
+        status.lastVfdCommandAttemptMs = now;
+        strncpy(status.lastVfdCommandAction, action, sizeof(status.lastVfdCommandAction) - 1);
+        status.lastVfdCommandAction[sizeof(status.lastVfdCommandAction) - 1] = '\0';
+        strncpy(status.lastVfdCommandReason, reason, sizeof(status.lastVfdCommandReason) - 1);
+        status.lastVfdCommandReason[sizeof(status.lastVfdCommandReason) - 1] = '\0';
+        Logger::infof(
+            TAG_AUTO,
+            "VFD schedule source=AUTO action=%s accepted=%u desiredPower=%u desiredStep=%u requestedHz=%.1f lastPower=%u lastStep=%u lastHz=%.1f running=%u actualHz=%.1f reason=%s",
+            action,
+            accepted ? 1 : 0,
+            status.desiredVfdPower ? 1 : 0,
+            status.desiredVfdStep,
+            status.desiredVfdHz,
+            lastAppliedVfdPower ? 1 : 0,
+            lastAppliedVfdStep,
+            lastAppliedVfdHz,
+            state->vfd.running ? 1 : 0,
+            state->vfd.hasActualFrequency ? state->vfd.actualFrequencyHz : -1.0f,
+            reason
+        );
+    };
+
+    const bool vfdActuallyOn = state->vfd.running
+        || (state->vfd.hasActualFrequency && state->vfd.actualFrequencyHz > 0.5f);
+    const bool vfdRetryAllowed = now - lastVfdCommandMs >= AppConfig::AUTO_COMMAND_RETRY_INTERVAL_MS;
+    const bool vfdRequestedFrequencyMatches = state->vfd.hasRequestedFrequency
+        && fabsf(state->vfd.requestedFrequencyHz - status.desiredVfdHz) <= 0.5f;
+    const bool vfdActualFrequencyMatches = state->vfd.hasActualFrequency
+        && fabsf(state->vfd.actualFrequencyHz - status.desiredVfdHz) <= 0.75f;
+    const bool vfdFrequencyCommandRecentlySent = hasAppliedVfd
+        && lastAppliedVfdStep == status.desiredVfdStep
+        && fabsf(lastAppliedVfdHz - status.desiredVfdHz) <= 0.5f
+        && !vfdRetryAllowed;
+    const bool vfdPowerCommandRecentlySent = hasAppliedVfd
+        && lastAppliedVfdPower == status.desiredVfdPower
+        && lastAppliedVfdStep == status.desiredVfdStep
+        && fabsf(lastAppliedVfdHz - status.desiredVfdHz) <= 0.5f
+        && !vfdRetryAllowed;
+
     if (status.desiredVfdPower && (!state->vfd.initialized || state->vfd.communicationError)) {
         setSkippedReason("VFD desired but VFD is unavailable");
     } else if (status.desiredVfdPower) {
-        const bool vfdCacheMatches = hasAppliedVfd
-            && lastAppliedVfdPower
-            && lastAppliedVfdStep == status.desiredVfdStep
-            && fabsf(lastAppliedVfdHz - status.desiredVfdHz) <= 0.5f;
-        const bool vfdActualMatches = state->vfd.running
-            && state->vfd.hasActualFrequency
-            && fabsf(state->vfd.actualFrequencyHz - status.desiredVfdHz) <= 0.75f;
-        const bool retryAllowed = now - lastVfdCommandMs >= AppConfig::AUTO_COMMAND_RETRY_INTERVAL_MS;
+        const bool frequencyNeedsCommand = status.desiredVfdStep > 0
+            && (vfdActuallyOn
+                ? (!vfdRequestedFrequencyMatches || (!vfdActualFrequencyMatches && vfdRetryAllowed))
+                : !vfdRequestedFrequencyMatches);
 
-        if (!vfdCacheMatches || (!vfdActualMatches && retryAllowed)) {
-            bool accepted = false;
-            if (!state->vfd.running) accepted = controller->vfdForward("auto", false) || accepted;
-            if (!state->vfd.hasRequestedFrequency || fabsf(state->vfd.requestedFrequencyHz - status.desiredVfdHz) > 0.5f) {
-                accepted = controller->vfdSetFrequency(status.desiredVfdHz, "auto", false) || accepted;
-            }
+        if (frequencyNeedsCommand && !vfdFrequencyCommandRecentlySent) {
+            const bool accepted = controller->vfdSetFrequency(status.desiredVfdHz, "auto", false);
+            noteVfdCommand(
+                "set_frequency",
+                vfdActuallyOn ? "frequency differs while VFD is running" : "set frequency before forward",
+                accepted
+            );
             if (accepted) {
                 hasAppliedVfd = true;
-                lastAppliedVfdPower = true;
+                lastAppliedVfdPower = vfdActuallyOn;
                 lastAppliedVfdStep = status.desiredVfdStep;
                 lastAppliedVfdHz = status.desiredVfdHz;
                 lastVfdCommandMs = now;
                 commandSent = true;
-                strlcat(result, "VFD applied; ", sizeof(result));
+                strlcat(result, "VFD set_frequency requested; ", sizeof(result));
             } else {
-                setSkippedReason("VFD command was not accepted, bus may be busy");
+                setSkippedReason("VFD set_frequency was not accepted, bus may be busy");
             }
+        } else if (!vfdActuallyOn) {
+            if (!vfdPowerCommandRecentlySent) {
+                const bool accepted = controller->vfdForward("auto", false);
+                noteVfdCommand("forward", "frequency prepared, start VFD", accepted);
+                if (accepted) {
+                    hasAppliedVfd = true;
+                    lastAppliedVfdPower = true;
+                    lastAppliedVfdStep = status.desiredVfdStep;
+                    lastAppliedVfdHz = status.desiredVfdHz;
+                    lastVfdCommandMs = now;
+                    commandSent = true;
+                    strlcat(result, "VFD forward requested; ", sizeof(result));
+                } else {
+                    setSkippedReason("VFD forward was not accepted, bus may be busy");
+                }
+            } else {
+                setSkippedReason("VFD forward already requested, waiting before retry");
+            }
+        } else if (vfdRequestedFrequencyMatches || vfdActualFrequencyMatches || vfdFrequencyCommandRecentlySent) {
+            hasAppliedVfd = true;
+            lastAppliedVfdPower = true;
+            lastAppliedVfdStep = status.desiredVfdStep;
+            lastAppliedVfdHz = status.desiredVfdHz;
+            setSkippedReason("VFD desired state already requested/applied");
         } else {
-            setSkippedReason("VFD desired state already applied");
+            setSkippedReason("VFD waiting for retry window before repeating command");
         }
-    } else if (state->vfd.running) {
-        const bool retryAllowed = now - lastVfdCommandMs >= AppConfig::AUTO_COMMAND_RETRY_INTERVAL_MS;
-        if (!hasAppliedVfd || lastAppliedVfdPower || retryAllowed) {
-            if (controller->vfdStop("auto", false)) {
+    } else if (vfdActuallyOn) {
+        if (!vfdPowerCommandRecentlySent) {
+            const bool accepted = controller->vfdStop("auto", false);
+            noteVfdCommand("stop", "desired VFD power is off", accepted);
+            if (accepted) {
                 hasAppliedVfd = true;
                 lastAppliedVfdPower = false;
                 lastAppliedVfdStep = 0;
                 lastAppliedVfdHz = 0.0f;
                 lastVfdCommandMs = now;
                 commandSent = true;
-                strlcat(result, "VFD stop applied; ", sizeof(result));
+                strlcat(result, "VFD stop requested; ", sizeof(result));
             } else {
                 setSkippedReason("VFD stop was not accepted, bus may be busy");
             }
+        } else {
+            setSkippedReason("VFD stop already requested, waiting before retry");
         }
+    } else {
+        hasAppliedVfd = true;
+        lastAppliedVfdPower = false;
+        lastAppliedVfdStep = 0;
+        lastAppliedVfdHz = 0.0f;
     }
 
     if (commandSent) {

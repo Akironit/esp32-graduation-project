@@ -1947,6 +1947,16 @@ void SerialConsole::processAutoCommand(const String& cmd) {
         println(status.lastApplyResult);
         print("lastSkippedReason=");
         println(status.lastSkippedReason);
+        print("lastVfdCommandAction=");
+        println(status.lastVfdCommandAction);
+        print("lastVfdCommandReason=");
+        println(status.lastVfdCommandReason);
+        print("vfdAutoCommandAttempts=");
+        println(String(status.vfdAutoCommandAttempts));
+        print("vfdAutoCommandAccepted=");
+        println(String(status.vfdAutoCommandAccepted));
+        print("lastVfdCommandAttemptAge=");
+        println(String(status.lastVfdCommandAttemptMs == 0 ? 0 : millis() - status.lastVfdCommandAttemptMs) + " ms");
         print("lastCommandAge=");
         println(String(status.lastCommandMs == 0 ? 0 : millis() - status.lastCommandMs) + " ms");
         print("lastDecisionAge=");

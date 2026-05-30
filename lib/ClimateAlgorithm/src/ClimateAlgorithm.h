@@ -50,6 +50,11 @@ struct AutoControlStatus {
     char reason[192] = "Not evaluated";
     char lastApplyResult[96] = "No command applied yet";
     char lastSkippedReason[96] = "No command skipped yet";
+    char lastVfdCommandAction[24] = "none";
+    char lastVfdCommandReason[96] = "No VFD command yet";
+    uint32_t vfdAutoCommandAttempts = 0;
+    uint32_t vfdAutoCommandAccepted = 0;
+    unsigned long lastVfdCommandAttemptMs = 0;
     unsigned long lastCommandMs = 0;
     unsigned long lastDecisionMs = 0;
     unsigned long lastVentCompensationMs = 0;

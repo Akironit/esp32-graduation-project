@@ -52,6 +52,7 @@ public:
 
 private:
     static constexpr unsigned long REQUEST_TIMEOUT_GUARD_MS = 1000;
+    static constexpr unsigned long REQUEST_COOLDOWN_MS = 20;
     static constexpr uint8_t LINK_ERROR_THRESHOLD = 3;
 
     ModbusClientRTU client;
@@ -85,6 +86,7 @@ private:
     bool requestInFlight = false;
     uint32_t inFlightToken = 0;
     unsigned long requestStartedMs = 0;
+    unsigned long requestFinishedMs = 0;
 
     uint32_t nextToken();
     uint8_t frequencyToStep(float hz) const;

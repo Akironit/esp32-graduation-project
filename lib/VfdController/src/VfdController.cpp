@@ -228,7 +228,7 @@ unsigned long VfdController::getLastActivityAgeMs() const {
 
 bool VfdController::isBusy() const {
     if (!requestInFlight) {
-        return false;
+        return requestFinishedMs > 0 && millis() - requestFinishedMs < REQUEST_COOLDOWN_MS;
     }
 
     if (millis() - requestStartedMs > REQUEST_TIMEOUT_GUARD_MS) {
@@ -336,6 +336,7 @@ uint32_t VfdController::queueWriteSingle(uint16_t address, uint16_t value) {
 void VfdController::onData(ModbusMessage msg, uint32_t token) {
     if (token == inFlightToken) {
         requestInFlight = false;
+        requestFinishedMs = millis();
     }
 
     okCount++;
@@ -401,6 +402,7 @@ void VfdController::onError(Error error, uint32_t token) {
     if (isCrcNoise(error)) {
         if (token == inFlightToken) {
             requestInFlight = false;
+            requestFinishedMs = millis();
         }
 
         crcErrorCount++;
@@ -427,6 +429,7 @@ void VfdController::onError(Error error, uint32_t token) {
 
     if (token == inFlightToken) {
         requestInFlight = false;
+        requestFinishedMs = millis();
     }
 
     errorCount++;

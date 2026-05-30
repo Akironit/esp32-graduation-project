@@ -93,11 +93,14 @@ bool DeviceController::vfdForward(const char* source, bool syncActive) {
     const bool busy = vfd->isBusy();
     Logger::infof(
         TAG_ACTION,
-        "VFD command source=%s action=forward busy=%u sync=%u token=%lu",
+        "VFD command source=%s action=forward busy=%u sync=%u token=%lu hasRequestedHz=%u requestedHz=%.2f lastAction=%s",
         source,
         busy ? 1 : 0,
         syncActive ? 1 : 0,
-        (unsigned long)vfd->getLastToken()
+        (unsigned long)vfd->getLastToken(),
+        vfd->hasRequestedFrequency() ? 1 : 0,
+        vfd->hasRequestedFrequency() ? vfd->getRequestedFrequencyHz() : 0.0f,
+        vfd->getLastAction()
     );
     if (busy) {
         return false;
@@ -117,11 +120,14 @@ bool DeviceController::vfdReverse(const char* source, bool syncActive) {
     const bool busy = vfd->isBusy();
     Logger::infof(
         TAG_ACTION,
-        "VFD command source=%s action=reverse busy=%u sync=%u token=%lu",
+        "VFD command source=%s action=reverse busy=%u sync=%u token=%lu hasRequestedHz=%u requestedHz=%.2f lastAction=%s",
         source,
         busy ? 1 : 0,
         syncActive ? 1 : 0,
-        (unsigned long)vfd->getLastToken()
+        (unsigned long)vfd->getLastToken(),
+        vfd->hasRequestedFrequency() ? 1 : 0,
+        vfd->hasRequestedFrequency() ? vfd->getRequestedFrequencyHz() : 0.0f,
+        vfd->getLastAction()
     );
     if (busy) {
         return false;
@@ -141,11 +147,14 @@ bool DeviceController::vfdStop(const char* source, bool syncActive) {
     const bool busy = vfd->isBusy();
     Logger::infof(
         TAG_ACTION,
-        "VFD command source=%s action=stop busy=%u sync=%u token=%lu",
+        "VFD command source=%s action=stop busy=%u sync=%u token=%lu hasRequestedHz=%u requestedHz=%.2f lastAction=%s",
         source,
         busy ? 1 : 0,
         syncActive ? 1 : 0,
-        (unsigned long)vfd->getLastToken()
+        (unsigned long)vfd->getLastToken(),
+        vfd->hasRequestedFrequency() ? 1 : 0,
+        vfd->hasRequestedFrequency() ? vfd->getRequestedFrequencyHz() : 0.0f,
+        vfd->getLastAction()
     );
     if (busy) {
         return false;
@@ -165,12 +174,15 @@ bool DeviceController::vfdSetFrequency(float hz, const char* source, bool syncAc
     const bool busy = vfd->isBusy();
     Logger::infof(
         TAG_ACTION,
-        "VFD command source=%s action=set_frequency busy=%u sync=%u token=%lu hz=%.2f",
+        "VFD command source=%s action=set_frequency busy=%u sync=%u token=%lu hz=%.2f hasRequestedHz=%u lastRequestedHz=%.2f lastAction=%s",
         source,
         busy ? 1 : 0,
         syncActive ? 1 : 0,
         (unsigned long)vfd->getLastToken(),
-        hz
+        hz,
+        vfd->hasRequestedFrequency() ? 1 : 0,
+        vfd->hasRequestedFrequency() ? vfd->getRequestedFrequencyHz() : 0.0f,
+        vfd->getLastAction()
     );
     if (busy) {
         return false;
