@@ -97,7 +97,14 @@ void App::begin() {
         MQTT_CLIENT_ID,
         MQTT_BASE_TOPIC,
         &state,
-        &controller
+        &controller,
+        &climateAlgorithm
+    );
+    homeAssistant.setCommandHandlers(
+        this,
+        &App::handleHomeAssistantVfdSync,
+        &App::handleHomeAssistantSettingsChanged,
+        &App::handleHomeAssistantReboot
     );
 
     hp.connect(&Serial1, IS_SECONDARY_CONTROLLER, AC_LIN_RX1_PIN, AC_LIN_TX1_PIN);
@@ -335,14 +342,25 @@ void App::updateDeviceState() {
         state.uptimeHours = uptimeSeconds / 3600UL;
         state.uptimeMinutes = (uptimeSeconds / 60UL) % 60UL;
         state.uptimeSecondPart = uptimeSeconds % 60UL;
-        snprintf(
-            state.uptimeText,
-            sizeof(state.uptimeText),
-            "%02u:%02u:%02u",
-            state.uptimeHours,
-            state.uptimeMinutes,
-            state.uptimeSecondPart
-        );
+        if (state.uptimeHours < 100UL) {
+            snprintf(
+                state.uptimeText,
+                sizeof(state.uptimeText),
+                "%02lu:%02u:%02u",
+                (unsigned long)state.uptimeHours,
+                state.uptimeMinutes,
+                state.uptimeSecondPart
+            );
+        } else {
+            snprintf(
+                state.uptimeText,
+                sizeof(state.uptimeText),
+                "%lu:%02u:%02u",
+                (unsigned long)state.uptimeHours,
+                state.uptimeMinutes,
+                state.uptimeSecondPart
+            );
+        }
     }
 
     state.wifiConnected = network.isConnected();
@@ -879,6 +897,36 @@ void App::requestVfdCommandSync(const char* reason) {
     }
 
     Logger::tracef(TAG_VFD_UI, "VFD sync not needed: %s", reason);
+}
+
+
+bool App::handleHomeAssistantVfdSync(void* context, const char* reason) {
+    App* app = static_cast<App*>(context);
+    if (app == nullptr) {
+        return false;
+    }
+    app->requestVfdCommandSync(reason != nullptr ? reason : "ha vfd");
+    return true;
+}
+
+
+void App::handleHomeAssistantSettingsChanged(void* context) {
+    App* app = static_cast<App*>(context);
+    if (app == nullptr) {
+        return;
+    }
+    app->scheduleUserSettingsSave();
+}
+
+
+void App::handleHomeAssistantReboot(void* context) {
+    App* app = static_cast<App*>(context);
+    if (app == nullptr) {
+        return;
+    }
+    Logger::warning(TAG_SETTINGS, "Restart requested from Home Assistant");
+    app->saveUserSettings();
+    app->controller.restart(300);
 }
 
 

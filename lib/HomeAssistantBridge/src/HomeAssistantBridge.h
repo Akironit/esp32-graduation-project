@@ -6,6 +6,7 @@
 
 #include "DeviceController.h"
 #include "DeviceState.h"
+#include "ClimateAlgorithm.h"
 
 // Home Assistant MQTT Discovery prefix. Default Home Assistant setting is "homeassistant".
 #ifndef HA_DISCOVERY_PREFIX
@@ -49,6 +50,10 @@
 
 class HomeAssistantBridge {
 public:
+    using VfdSyncHandler = bool (*)(void* context, const char* reason);
+    using SettingsChangedHandler = void (*)(void* context);
+    using RebootHandler = void (*)(void* context);
+
     void begin(
         bool enabled,
         const char* host,
@@ -58,7 +63,15 @@ public:
         const char* clientId,
         const char* baseTopic,
         DeviceState* state,
-        DeviceController* controller
+        DeviceController* controller,
+        ClimateAlgorithm* climateAlgorithm
+    );
+
+    void setCommandHandlers(
+        void* context,
+        VfdSyncHandler vfdSyncHandler,
+        SettingsChangedHandler settingsChangedHandler,
+        RebootHandler rebootHandler
     );
 
     void update(bool networkConnected);
@@ -85,6 +98,11 @@ private:
     const char* baseTopic = nullptr;
     DeviceState* state = nullptr;
     DeviceController* controller = nullptr;
+    ClimateAlgorithm* climateAlgorithm = nullptr;
+    void* commandContext = nullptr;
+    VfdSyncHandler vfdSyncHandler = nullptr;
+    SettingsChangedHandler settingsChangedHandler = nullptr;
+    RebootHandler rebootHandler = nullptr;
     unsigned long lastReconnectAttemptMs = 0;
     unsigned long reconnectIntervalMs = HA_RECONNECT_INTERVAL_MS;
     unsigned long lastPublishMs = 0;
@@ -140,6 +158,17 @@ private:
         int step,
         const char* unit = nullptr
     );
+    void publishNumberDiscovery(
+        const char* objectId,
+        const char* name,
+        const char* entityObjectId,
+        const char* stateSuffix,
+        const char* commandSuffix,
+        const char* min,
+        const char* max,
+        const char* step,
+        const char* unit = nullptr
+    );
     void publishSelectDiscovery(
         const char* objectId,
         const char* name,
@@ -147,6 +176,13 @@ private:
         const char* stateSuffix,
         const char* commandSuffix,
         const char* optionsJson
+    );
+    void publishButtonDiscovery(
+        const char* objectId,
+        const char* name,
+        const char* entityObjectId,
+        const char* commandSuffix,
+        const char* deviceClass = nullptr
     );
     void publishAvailability(bool online);
     void publishTopic(const char* suffix, const char* value, bool retained = false);
@@ -160,7 +196,14 @@ private:
     const char* acFanName(uint8_t fanMode) const;
     uint8_t acFanValue(const String& fanMode) const;
     const char* displayPageName(uint8_t pageIndex) const;
+    const char* deviceModeName(DeviceMode mode) const;
+    const char* activityName(ControllerActivity activity) const;
     const char* vfdRunState(const char* lastAction) const;
+    const char* vfdErrorName(uint8_t code) const;
+    uint8_t frequencyToStep(float hz) const;
+    bool syncVfd(const char* reason);
+    void notifySettingsChanged();
+    bool updateAutoSettings(const AutoControlSettings& settings);
     String topicSuffix(const char* topic) const;
     String payloadToString(byte* payload, unsigned int length) const;
     String commandTopic(const char* suffix) const;

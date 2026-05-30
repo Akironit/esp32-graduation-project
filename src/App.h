@@ -90,6 +90,9 @@ private:
     bool isVfdDesiredStateReached() const;
     float vfdStepToHz(uint8_t step) const;
     void logVfdStateChanges();
+    static bool handleHomeAssistantVfdSync(void* context, const char* reason);
+    static void handleHomeAssistantSettingsChanged(void* context);
+    static void handleHomeAssistantReboot(void* context);
 
     enum class VfdSyncState : uint8_t {
         Idle,
