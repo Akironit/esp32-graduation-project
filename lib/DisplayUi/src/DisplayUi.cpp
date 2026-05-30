@@ -813,6 +813,12 @@ void DisplayUi::drawOverview(const DeviceState& state) {
     uint8_t shownAcFan = state.ac.fanMode;
     bool shownVfdPower = state.vfd.running || (state.vfd.hasActualFrequency && state.vfd.actualFrequencyHz > 1.0f);
     uint8_t shownVfdStep = vfdStep(state.vfd);
+    bool desiredVfdPower = state.vfd.commandedRunning;
+    if (state.controllerState.mode == DeviceMode::Auto) {
+        desiredVfdPower = state.ventilation.desiredVfdPower;
+    } else if (state.controllerState.mode == DeviceMode::Manual) {
+        desiredVfdPower = state.settings.manualVfdPower;
+    }
 
     if (interactionMode == InteractionMode::Edit) {
         switch (selectedParam) {
@@ -920,8 +926,40 @@ void DisplayUi::drawOverview(const DeviceState& state) {
     drawFreeTextBox(28, 218, 128, 90, 18, vfdLink, valueFont, vfdLinkColor);
     drawFontTextBox(29, 168, 150, 50, 16, "Power", 2, COLOR_MUTED);
     drawFreeTextBox(30, 224, 150, 40, 18, shownVfdPower ? "ON " : "OFF", valueFont, shownVfdPower ? COLOR_OK : COLOR_MUTED);
+    const String desiredVfdDotCache = desiredVfdPower ? "vfd-desired-on" : "vfd-desired-off";
+    const uint16_t desiredVfdDotColor = desiredVfdPower ? COLOR_OK : COLOR_MUTED;
+    if (lineCache[35] != desiredVfdDotCache || lineColorCache[35] != desiredVfdDotColor) {
+        lineCache[35] = desiredVfdDotCache;
+        lineColorCache[35] = desiredVfdDotColor;
+        tft.fillRect(292, 152, 16, 14, COLOR_BG);
+        tft.fillCircle(300, 159, 3, desiredVfdDotColor);
+    }
     drawFontTextBox(31, 168, 170, 40, 16, "Step", 2, COLOR_MUTED);
     drawFreeTextBox(32, 212, 170, 38, 18, String(shownVfdStep) + "/6", valueFont, shownVfdStep > 0 ? COLOR_OK : COLOR_MUTED);
+    const uint8_t rawExhaustCompStep = min<uint8_t>(6, state.ventilation.bathCompStep + state.ventilation.hoodCompStep);
+    const uint8_t afterHoldRequestStep = state.ventilation.additiveCompensation
+        ? max<uint8_t>(min<uint8_t>(6, state.ventilation.baseRequirementStep + rawExhaustCompStep), state.ventilation.coolingRequirementStep)
+        : max<uint8_t>(max<uint8_t>(state.ventilation.baseRequirementStep, rawExhaustCompStep), state.ventilation.coolingRequirementStep);
+    String offDelayText;
+    if (state.ventilation.compensationOffDelayActive && state.ventilation.compensationOffDelayRemainingSec > 0) {
+        const uint32_t remainingSec = state.ventilation.compensationOffDelayRemainingSec;
+        offDelayText = remainingSec > 999UL
+            ? String((remainingSec + 59UL) / 60UL) + "m"
+            : String(remainingSec) + "s";
+    }
+    const uint16_t offDelayColor = afterHoldRequestStep > 0 ? COLOR_WARN : COLOR_MUTED;
+    if (lineCache[36] != offDelayText || lineColorCache[36] != offDelayColor) {
+        lineCache[36] = offDelayText;
+        lineColorCache[36] = offDelayColor;
+        tft.fillRect(262, 170, 46, 18, COLOR_BG);
+        if (offDelayText.length() > 0) {
+            tft.setFreeFont(nullptr);
+            tft.setTextFont(2);
+            tft.setTextSize(1);
+            tft.setTextColor(offDelayColor, COLOR_BG);
+            tft.drawRightString(offDelayText, 306, 170, 2);
+        }
+    }
     drawFontTextBox(33, 168, 194, 38, 16, "Freq", 2, COLOR_MUTED);
     const bool hasVfdFrequency = state.vfd.hasActualFrequency;
     const float vfdFrequency = state.vfd.actualFrequencyHz;
