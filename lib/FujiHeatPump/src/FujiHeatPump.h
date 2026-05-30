@@ -88,6 +88,10 @@ class FujiHeatPump {
     bool            seenSecondaryController = false;  
     bool            controllerLoggedIn = false; 
     unsigned long   lastFrameReceived;
+    unsigned long   lastAnyFrameReceived = 0;
+    byte            lastFrameSourceAddress = 0;
+    byte            lastFrameDestinationAddress = 0;
+    byte            lastFrameMessageType = 0;
     Print*          debugOutput = nullptr;
     
     byte            updateFields;
@@ -122,6 +126,11 @@ class FujiHeatPump {
     bool updatePending();
     bool hasReceivedFrame();
     unsigned long getLastFrameAgeMs();
+    bool hasAnyFrame();
+    unsigned long getLastAnyFrameAgeMs();
+    byte getLastFrameSourceAddress();
+    byte getLastFrameDestinationAddress();
+    byte getLastFrameMessageType();
     bool hasCommunicationError();
     uint8_t getConsecutiveErrorCount();
     uint32_t getErrorCount();

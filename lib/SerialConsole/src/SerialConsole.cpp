@@ -329,6 +329,11 @@ void SerialConsole::processCommand(const String& cmd) {
         return;
     }
 
+    if (cmd == "diag" || cmd == "diag list" || cmd == "diagnostics") {
+        printDiagnostics();
+        return;
+    }
+
 #if ENABLE_STATE_DEBUG_COMMANDS
     if (cmd == "debug help" || cmd == "dbg help") {
         printDebugHelp();
@@ -417,7 +422,7 @@ void SerialConsole::processCommand(const String& cmd) {
         return;
     }
 
-    println("Unknown command. Use: ac <cmd>, vfd <cmd>, temp <cmd>, auto <cmd>, display <cmd>, state <cmd>");
+    println("Unknown command. Use: ac <cmd>, vfd <cmd>, temp <cmd>, auto <cmd>, display <cmd>, state <cmd>, diag");
     println("Type 'help' for available commands");
 }
 
@@ -589,7 +594,7 @@ void SerialConsole::processVfdCommand(const String& cmd) {
 
     if (cmd == "fwd") {
         if (controller == nullptr || !controller->vfdForward("console")) {
-            println("Error: VFD controller action layer is not available");
+            println("Error: VFD request queue is full. Retry in 1-2 seconds.");
             return;
         }
 
@@ -599,7 +604,7 @@ void SerialConsole::processVfdCommand(const String& cmd) {
 
     if (cmd == "rev") {
         if (controller == nullptr || !controller->vfdReverse("console")) {
-            println("Error: VFD controller action layer is not available");
+            println("Error: VFD request queue is full. Retry in 1-2 seconds.");
             return;
         }
 
@@ -609,7 +614,7 @@ void SerialConsole::processVfdCommand(const String& cmd) {
 
     if (cmd == "stop") {
         if (controller == nullptr || !controller->vfdStop("console")) {
-            println("Error: VFD controller action layer is not available");
+            println("Error: VFD request queue is full. Retry in 1-2 seconds.");
             return;
         }
 
@@ -626,7 +631,7 @@ void SerialConsole::processVfdCommand(const String& cmd) {
         }
 
         if (controller == nullptr || !controller->vfdSetFrequency(hz, "console")) {
-            println("Error: VFD controller action layer is not available");
+            println("Error: VFD request queue is full. Retry in 1-2 seconds.");
             return;
         }
 
@@ -657,7 +662,7 @@ void SerialConsole::processVfdCommand(const String& cmd) {
         }
 
         if (controller == nullptr || !controller->vfdReadRegister(address, count)) {
-            println("Error: VFD controller action layer is not available");
+            println("Error: VFD request queue is full. Retry in 1-2 seconds.");
             return;
         }
 
@@ -688,7 +693,7 @@ void SerialConsole::processVfdCommand(const String& cmd) {
         }
 
         if (controller == nullptr || !controller->vfdWriteRegister(address, value)) {
-            println("Error: VFD controller action layer is not available");
+            println("Error: VFD request queue is full. Retry in 1-2 seconds.");
             return;
         }
 
@@ -1204,6 +1209,48 @@ void SerialConsole::printStateStatus() {
 }
 
 
+void SerialConsole::printDiagnostics() {
+    if (state == nullptr) {
+        println("[DIAG] DeviceState is not connected to console");
+        return;
+    }
+
+    println();
+    println("[DIAG] Active diagnostics");
+    print("warnings=");
+    println((int)state->diagnostics.warningCount);
+    print("errors=");
+    println((int)state->diagnostics.errorCount);
+
+    if (state->diagnostics.itemCount == 0) {
+        println("none");
+        println();
+        return;
+    }
+
+    for (uint8_t i = 0; i < state->diagnostics.itemCount; i++) {
+        const DiagnosticItem& item = state->diagnostics.items[i];
+        if (!item.active) {
+            continue;
+        }
+
+        const char marker = item.severity == DiagnosticSeverity::Error
+            ? 'E'
+            : (item.severity == DiagnosticSeverity::Warning ? 'W' : 'I');
+        print(String(marker) + String((int)item.code) + " ");
+        println(item.title);
+        print("  details: ");
+        println(item.details);
+        print("  recommendation: ");
+        println(item.recommendation);
+        print("  age: ");
+        println(String(state->uptimeMs >= item.firstSeenMs ? state->uptimeMs - item.firstSeenMs : 0) + " ms");
+    }
+
+    println();
+}
+
+
 void SerialConsole::printTemperatureStateStatus() {
     if (state == nullptr) {
         println("[TEMP] DeviceState is not connected to console");
@@ -1296,6 +1343,7 @@ void SerialConsole::printHelp() {
     println("auto <command> - Automatic climate algorithm");
     println("display <cmd>  - LCD display pages");
     println("state <cmd>    - Device state snapshot");
+    println("diag           - active diagnostics list");
 #if ENABLE_STATE_DEBUG_COMMANDS
     println("debug <cmd>    - temporary UI state simulator");
 #endif
@@ -1313,6 +1361,7 @@ void SerialConsole::printHelp() {
     println("auto dry on");
     println("display next");
     println("state status");
+    println("diag");
 #if ENABLE_STATE_DEBUG_COMMANDS
     println("debug mode manual");
     println("debug activity accool");
@@ -1941,6 +1990,26 @@ void SerialConsole::processAutoCommand(const String& cmd) {
         println(state != nullptr ? (int)state->ac.consecutiveErrorCount : 0);
         print("actualAcErrorCount=");
         println(String(state != nullptr ? state->ac.errorCount : 0));
+        if (state != nullptr) {
+            println("[DIAGNOSTICS]");
+            print("warnings=");
+            println((int)state->diagnostics.warningCount);
+            print("errors=");
+            println((int)state->diagnostics.errorCount);
+            for (uint8_t i = 0; i < state->diagnostics.itemCount; i++) {
+                const DiagnosticItem& item = state->diagnostics.items[i];
+                if (!item.active) {
+                    continue;
+                }
+                const char marker = item.severity == DiagnosticSeverity::Error
+                    ? 'E'
+                    : (item.severity == DiagnosticSeverity::Warning ? 'W' : 'I');
+                print(String(marker) + String((int)item.code) + "=");
+                print(item.title);
+                print(" | ");
+                println(item.details);
+            }
+        }
         print("reason=");
         println(status.reason);
         print("lastApplyResult=");

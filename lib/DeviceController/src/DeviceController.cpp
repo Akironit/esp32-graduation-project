@@ -90,23 +90,20 @@ bool DeviceController::vfdForward(const char* source, bool syncActive) {
         return false;
     }
 
-    const bool busy = vfd->isBusy();
     Logger::infof(
         TAG_ACTION,
-        "VFD command source=%s action=forward busy=%u sync=%u token=%lu hasRequestedHz=%u requestedHz=%.2f lastAction=%s",
+        "VFD command source=%s action=forward sync=%u token=%lu hasRequestedHz=%u requestedHz=%.2f lastAction=%s",
         source,
-        busy ? 1 : 0,
         syncActive ? 1 : 0,
         (unsigned long)vfd->getLastToken(),
         vfd->hasRequestedFrequency() ? 1 : 0,
         vfd->hasRequestedFrequency() ? vfd->getRequestedFrequencyHz() : 0.0f,
         vfd->getLastAction()
     );
-    if (busy) {
+
+    if (!vfd->forward()) {
         return false;
     }
-
-    vfd->forward();
     Logger::info(TAG_ACTION, "VFD forward");
     return true;
 }
@@ -117,23 +114,20 @@ bool DeviceController::vfdReverse(const char* source, bool syncActive) {
         return false;
     }
 
-    const bool busy = vfd->isBusy();
     Logger::infof(
         TAG_ACTION,
-        "VFD command source=%s action=reverse busy=%u sync=%u token=%lu hasRequestedHz=%u requestedHz=%.2f lastAction=%s",
+        "VFD command source=%s action=reverse sync=%u token=%lu hasRequestedHz=%u requestedHz=%.2f lastAction=%s",
         source,
-        busy ? 1 : 0,
         syncActive ? 1 : 0,
         (unsigned long)vfd->getLastToken(),
         vfd->hasRequestedFrequency() ? 1 : 0,
         vfd->hasRequestedFrequency() ? vfd->getRequestedFrequencyHz() : 0.0f,
         vfd->getLastAction()
     );
-    if (busy) {
+
+    if (!vfd->reverse()) {
         return false;
     }
-
-    vfd->reverse();
     Logger::info(TAG_ACTION, "VFD reverse");
     return true;
 }
@@ -144,23 +138,20 @@ bool DeviceController::vfdStop(const char* source, bool syncActive) {
         return false;
     }
 
-    const bool busy = vfd->isBusy();
     Logger::infof(
         TAG_ACTION,
-        "VFD command source=%s action=stop busy=%u sync=%u token=%lu hasRequestedHz=%u requestedHz=%.2f lastAction=%s",
+        "VFD command source=%s action=stop sync=%u token=%lu hasRequestedHz=%u requestedHz=%.2f lastAction=%s",
         source,
-        busy ? 1 : 0,
         syncActive ? 1 : 0,
         (unsigned long)vfd->getLastToken(),
         vfd->hasRequestedFrequency() ? 1 : 0,
         vfd->hasRequestedFrequency() ? vfd->getRequestedFrequencyHz() : 0.0f,
         vfd->getLastAction()
     );
-    if (busy) {
+
+    if (!vfd->stop()) {
         return false;
     }
-
-    vfd->stop();
     Logger::info(TAG_ACTION, "VFD stop");
     return true;
 }
@@ -171,12 +162,10 @@ bool DeviceController::vfdSetFrequency(float hz, const char* source, bool syncAc
         return false;
     }
 
-    const bool busy = vfd->isBusy();
     Logger::infof(
         TAG_ACTION,
-        "VFD command source=%s action=set_frequency busy=%u sync=%u token=%lu hz=%.2f hasRequestedHz=%u lastRequestedHz=%.2f lastAction=%s",
+        "VFD command source=%s action=set_frequency sync=%u token=%lu hz=%.2f hasRequestedHz=%u lastRequestedHz=%.2f lastAction=%s",
         source,
-        busy ? 1 : 0,
         syncActive ? 1 : 0,
         (unsigned long)vfd->getLastToken(),
         hz,
@@ -184,11 +173,10 @@ bool DeviceController::vfdSetFrequency(float hz, const char* source, bool syncAc
         vfd->hasRequestedFrequency() ? vfd->getRequestedFrequencyHz() : 0.0f,
         vfd->getLastAction()
     );
-    if (busy) {
+
+    if (!vfd->setFrequency(hz)) {
         return false;
     }
-
-    vfd->setFrequency(hz);
     Logger::infof(TAG_ACTION, "VFD frequency set to %.2f Hz", hz);
     return true;
 }
@@ -199,7 +187,10 @@ bool DeviceController::vfdReadRegister(uint16_t address, uint16_t count) {
         return false;
     }
 
-    vfd->readRegister(address, count);
+    if (!vfd->readRegister(address, count)) {
+        Logger::infof(TAG_ACTION, "VFD read rejected: queue full token=%lu", (unsigned long)vfd->getLastToken());
+        return false;
+    }
     Logger::infof(TAG_ACTION, "VFD read register address=0x%04X count=%u", address, count);
     return true;
 }
@@ -210,7 +201,10 @@ bool DeviceController::vfdWriteRegister(uint16_t address, uint16_t value) {
         return false;
     }
 
-    vfd->writeRegister(address, value);
+    if (!vfd->writeRegister(address, value)) {
+        Logger::infof(TAG_ACTION, "VFD write rejected: queue full token=%lu", (unsigned long)vfd->getLastToken());
+        return false;
+    }
     Logger::infof(TAG_ACTION, "VFD write register address=0x%04X value=0x%04X", address, value);
     return true;
 }

@@ -107,6 +107,10 @@ void FujiHeatPump::connect(HardwareSerial *serial, bool secondary, int rxPin=-1,
     }
     
     lastFrameReceived = 0;
+    lastAnyFrameReceived = 0;
+    lastFrameSourceAddress = 0;
+    lastFrameDestinationAddress = 0;
+    lastFrameMessageType = 0;
     lastLinkErrorCheckMs = 0;
     consecutiveErrorCount = 0;
     errorCount = 0;
@@ -212,6 +216,10 @@ bool FujiHeatPump::waitForFrame() {
     if(readNextFrame()) {
     
         ff = decodeFrame();
+        lastAnyFrameReceived = millis();
+        lastFrameSourceAddress = ff.messageSource;
+        lastFrameDestinationAddress = ff.messageDest;
+        lastFrameMessageType = ff.messageType;
 
         if(ff.messageSource == static_cast<byte>(FujiAddress::PRIMARY)) {
             seenPrimaryController = true;
@@ -436,6 +444,30 @@ unsigned long FujiHeatPump::getLastFrameAgeMs() {
     return millis() - lastFrameReceived;
 }
 
+bool FujiHeatPump::hasAnyFrame() {
+    return lastAnyFrameReceived != 0;
+}
+
+unsigned long FujiHeatPump::getLastAnyFrameAgeMs() {
+    if(!hasAnyFrame()) {
+        return 0;
+    }
+
+    return millis() - lastAnyFrameReceived;
+}
+
+byte FujiHeatPump::getLastFrameSourceAddress() {
+    return lastFrameSourceAddress;
+}
+
+byte FujiHeatPump::getLastFrameDestinationAddress() {
+    return lastFrameDestinationAddress;
+}
+
+byte FujiHeatPump::getLastFrameMessageType() {
+    return lastFrameMessageType;
+}
+
 bool FujiHeatPump::hasCommunicationError() {
     isBound();
     return communicationError;
@@ -517,6 +549,10 @@ void FujiHeatPump::setControllerRole(bool primary) {
     seenPrimaryController = false;
     seenSecondaryController = false;
     lastFrameReceived = 0;
+    lastAnyFrameReceived = 0;
+    lastFrameSourceAddress = 0;
+    lastFrameDestinationAddress = 0;
+    lastFrameMessageType = 0;
     lastLinkErrorCheckMs = 0;
     consecutiveErrorCount = 0;
     communicationError = false;

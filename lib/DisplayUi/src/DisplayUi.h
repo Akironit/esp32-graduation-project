@@ -122,6 +122,7 @@ private:
     static constexpr uint8_t LINE_CACHE_SIZE = 40;
     static constexpr uint8_t AUTO_VISIBLE_ROWS = 8;
     static constexpr uint8_t TEMP_VISIBLE_ROWS = 6;
+    static constexpr uint8_t DIAG_VISIBLE_ROWS = 12;
     String lineCache[LINE_CACHE_SIZE];
     uint16_t lineColorCache[LINE_CACHE_SIZE] = {};
     bool autoPageCacheValid = false;
@@ -146,6 +147,12 @@ private:
     String lastTempRowText[TEMP_VISIBLE_ROWS];
     String lastTempInfoText;
     String lastTempHintText;
+    bool diagnosticsScrollMode = false;
+    uint8_t diagnosticsScrollOffset = 0;
+    bool diagnosticsPageCacheValid = false;
+    uint8_t lastDiagnosticsScrollOffset = 255;
+    bool lastDiagnosticsScrollMode = false;
+    uint8_t lastDiagnosticsLineCount = 255;
 
     void render(const DeviceState& state, const AutoControlSettings& autoSettings);
 
@@ -190,6 +197,7 @@ private:
     Action applyEdit(DeviceState& state);
     Action handleAutoSettingsButton(Button button, bool longPress, const AutoControlSettings& autoSettings);
     Action handleTemperatureButton(Button button, bool longPress, const TemperatureStateSnapshot& temperatures);
+    Action handleDiagnosticsButton(Button button, bool longPress, const DeviceState& state);
     void enterAutoSettingsSelect();
     void enterAutoSettingsEdit(const AutoControlSettings& autoSettings);
     void moveAutoSettingsSelection(int8_t direction);
@@ -205,6 +213,7 @@ private:
     uint8_t acModeListIndex(uint8_t mode) const;
     uint8_t acModeFromListIndex(uint8_t index) const;
     float vfdStepToHz(uint8_t step) const;
+    uint8_t diagnosticsLineCount(const DeviceState& state) const;
     const char* overviewParamName(OverviewParam param) const;
     const char* interactionLabel() const;
 

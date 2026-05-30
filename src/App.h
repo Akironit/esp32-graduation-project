@@ -62,6 +62,7 @@ public:
 private:
     void updateHeatPump();
     void updateDeviceState();
+    void updateDiagnostics(const AutoControlStatus& autoStatus, const AutoControlSettings& autoSettings);
     void updateVfdStatus();
     bool updateVfdCommandSync();
     void configureIoExpanderInputs();

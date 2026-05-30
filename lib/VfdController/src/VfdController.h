@@ -16,15 +16,17 @@ public:
         uint32_t serialConfig = SERIAL_8E1
     );
 
-    void forward();
-    void reverse();
-    void stop();
+    bool forward();
+    bool reverse();
+    bool stop();
 
-    void setFrequency(float hz);
+    bool setFrequency(float hz);
+    void update();
     void pollStatus();
+    void suppressPolling(unsigned long durationMs = 5000);
 
-    void readRegister(uint16_t address, uint16_t count);
-    void writeRegister(uint16_t address, uint16_t value);
+    bool readRegister(uint16_t address, uint16_t count);
+    bool writeRegister(uint16_t address, uint16_t value);
 
     bool isInitialized() const;
     bool isOnline() const;
@@ -49,11 +51,27 @@ public:
     bool hasActivity() const;
     unsigned long getLastActivityAgeMs() const;
     bool isBusy() const;
+    bool isPollingSuppressed() const;
 
 private:
-    static constexpr unsigned long REQUEST_TIMEOUT_GUARD_MS = 1000;
-    static constexpr unsigned long REQUEST_COOLDOWN_MS = 20;
-    static constexpr uint8_t LINK_ERROR_THRESHOLD = 3;
+    static constexpr unsigned long REQUEST_TIMEOUT_GUARD_MS = 3000;
+    static constexpr unsigned long REQUEST_COOLDOWN_MS = 100;
+    static constexpr unsigned long REQUEST_ERROR_COOLDOWN_MS = 1500;
+    static constexpr uint8_t OP_QUEUE_SIZE = 8;
+    static constexpr uint8_t LINK_ERROR_THRESHOLD = 5;
+
+    enum class VfdOpType : uint8_t {
+        None,
+        ReadHolding,
+        WriteSingle
+    };
+
+    struct VfdOperation {
+        VfdOpType type = VfdOpType::None;
+        uint16_t address = 0;
+        uint16_t valueOrCount = 0;
+        const char* action = "none";
+    };
 
     ModbusClientRTU client;
     uint32_t tokenCounter = 1;
@@ -84,15 +102,28 @@ private:
     uint32_t monitorFrequencyToken = 0;
     bool pollFrequencyNext = false;
     bool requestInFlight = false;
+    bool lastRequestHadError = false;
+    VfdOperation activeOperation;
     uint32_t inFlightToken = 0;
     unsigned long requestStartedMs = 0;
     unsigned long requestFinishedMs = 0;
+    unsigned long pollingSuppressedUntilMs = 0;
+    VfdOperation opQueue[OP_QUEUE_SIZE];
+    uint8_t opHead = 0;
+    uint8_t opTail = 0;
+    uint8_t opCount = 0;
 
     uint32_t nextToken();
     uint8_t frequencyToStep(float hz) const;
 
-    uint32_t queueReadHolding(uint16_t address, uint16_t count);
-    uint32_t queueWriteSingle(uint16_t address, uint16_t value);
+    bool enqueueRead(uint16_t address, uint16_t count, const char* action);
+    bool enqueueWrite(uint16_t address, uint16_t value, const char* action);
+    bool dequeueOperation(VfdOperation& operation);
+    bool hasQueuedOperation() const;
+    bool isDuplicateQueued(const VfdOperation& operation) const;
+    void sendOperation(const VfdOperation& operation);
+    void completeRequest(bool hadError);
+    void recordError(Error error, uint32_t token, bool countAsTotalError, const char* level);
 
     void onData(ModbusMessage msg, uint32_t token);
     void onError(Error error, uint32_t token);

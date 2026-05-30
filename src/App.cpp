@@ -18,6 +18,58 @@ void IRAM_ATTR handleMcpInterruptA() {
 void IRAM_ATTR handleMcpInterruptB() {
     mcpInterruptB = true;
 }
+
+uint32_t keepFirstSeen(
+    const DiagnosticCode* previousCodes,
+    const uint32_t* previousFirstSeen,
+    uint8_t previousCount,
+    DiagnosticCode code,
+    uint32_t now
+) {
+    for (uint8_t i = 0; i < previousCount; i++) {
+        if (previousCodes[i] == code) {
+            return previousFirstSeen[i];
+        }
+    }
+
+    return now;
+}
+
+void addDiagnostic(
+    DiagnosticsSnapshot& diagnostics,
+    const DiagnosticCode* previousCodes,
+    const uint32_t* previousFirstSeen,
+    uint8_t previousCount,
+    DiagnosticSeverity severity,
+    DiagnosticCode code,
+    const char* title,
+    const char* details,
+    const char* recommendation,
+    uint32_t now
+) {
+    if (diagnostics.itemCount >= MAX_DIAGNOSTIC_ITEMS) {
+        return;
+    }
+
+    DiagnosticItem& item = diagnostics.items[diagnostics.itemCount++];
+    item.severity = severity;
+    item.code = code;
+    item.active = true;
+    strncpy(item.title, title, sizeof(item.title) - 1);
+    item.title[sizeof(item.title) - 1] = '\0';
+    strncpy(item.details, details, sizeof(item.details) - 1);
+    item.details[sizeof(item.details) - 1] = '\0';
+    strncpy(item.recommendation, recommendation, sizeof(item.recommendation) - 1);
+    item.recommendation[sizeof(item.recommendation) - 1] = '\0';
+    item.firstSeenMs = keepFirstSeen(previousCodes, previousFirstSeen, previousCount, code, now);
+    item.lastSeenMs = now;
+
+    if (severity == DiagnosticSeverity::Error) {
+        diagnostics.errorCount++;
+    } else if (severity == DiagnosticSeverity::Warning) {
+        diagnostics.warningCount++;
+    }
+}
 }
 
 
@@ -60,10 +112,12 @@ void App::begin() {
 
 
 void App::update() {
+    vfd.update();
     updateHeatPump();
     updateIoExpanderInputs();
 
     network.update();
+    vfd.update();
     updateHeatPump();
     updateIoExpanderInputs();
 
@@ -74,10 +128,12 @@ void App::update() {
     updateIoExpanderInputs();
 
     homeAssistant.update(network.isConnected());
+    vfd.update();
     updateHeatPump();
     updateIoExpanderInputs();
 
     console.update();
+    vfd.update();
     updateHeatPump();
 
     if (state.settings.mqttEnabled != lastMqttEnabled) {
@@ -97,15 +153,18 @@ void App::update() {
     if (!vfdCommandSent) {
         updateVfdStatus();
     }
+    vfd.update();
     updateHeatPump();
     updateIoExpanderInputs();
 
     updateDeviceState();
     updateModeTransition();
     climateAlgorithm.update();
+    vfd.update();
     updateDeviceState();
     display.update(state, climateAlgorithm.getSettings());
     updateDeferredSettingsSave();
+    vfd.update();
     updateHeatPump();
     updateIoExpanderInputs();
 
@@ -120,16 +179,16 @@ void App::updateHeatPump() {
 
 
 void App::updateVfdStatus() {
-    if (vfd.isBusy()) {
-        return;
-    }
-
     if (vfdCommandSyncActive) {
         return;
     }
 
     const unsigned long now = millis();
-    if (now - lastVfdStatusPollMs < AppConfig::VFD_STATUS_POLL_INTERVAL_MS) {
+    const bool vfdLinkUnstable = vfd.getConsecutiveErrorCount() >= 5 || vfd.hasCommunicationError();
+    const unsigned long pollInterval = vfdLinkUnstable
+        ? AppConfig::VFD_ERROR_POLL_BACKOFF_MS
+        : AppConfig::VFD_STATUS_POLL_INTERVAL_MS;
+    if (now - lastVfdStatusPollMs < pollInterval) {
         return;
     }
 
@@ -139,6 +198,7 @@ void App::updateVfdStatus() {
 
     lastVfdStatusPollMs = now;
     vfd.pollStatus();
+    vfd.update();
 }
 
 
@@ -267,6 +327,11 @@ void App::updateDeviceState() {
     state.ac.updatePending = hp.updatePending();
     state.ac.framePending = hp.hasPendingFrame();
     state.ac.debugEnabled = hp.debugPrint;
+    state.ac.hasAnyFrame = hp.hasAnyFrame();
+    state.ac.lastAnyFrameAgeMs = hp.hasAnyFrame() ? hp.getLastAnyFrameAgeMs() : 0;
+    state.ac.lastFrameSourceAddress = hp.getLastFrameSourceAddress();
+    state.ac.lastFrameDestinationAddress = hp.getLastFrameDestinationAddress();
+    state.ac.lastFrameType = hp.getLastFrameMessageType();
     state.ac.hasReceivedFrame = hp.hasReceivedFrame();
     state.ac.lastFrameAgeMs = hp.hasReceivedFrame() ? hp.getLastFrameAgeMs() : 0;
     state.ac.communicationError = hp.hasCommunicationError();
@@ -364,7 +429,116 @@ void App::updateDeviceState() {
     state.homeAssistant.hasPublished = homeAssistant.hasPublished();
     state.homeAssistant.lastPublishAgeMs = homeAssistant.getLastPublishAgeMs();
 
+    updateDiagnostics(autoStatus, autoSettings);
     logVfdStateChanges();
+}
+
+
+void App::updateDiagnostics(const AutoControlStatus& autoStatus, const AutoControlSettings& autoSettings) {
+    DiagnosticCode previousCodes[MAX_DIAGNOSTIC_ITEMS];
+    uint32_t previousFirstSeen[MAX_DIAGNOSTIC_ITEMS];
+    uint8_t previousCount = 0;
+    for (uint8_t i = 0; i < state.diagnostics.itemCount && i < MAX_DIAGNOSTIC_ITEMS; i++) {
+        if (!state.diagnostics.items[i].active) {
+            continue;
+        }
+        previousCodes[previousCount] = state.diagnostics.items[i].code;
+        previousFirstSeen[previousCount] = state.diagnostics.items[i].firstSeenMs;
+        previousCount++;
+    }
+
+    static DiagnosticsSnapshot diagnostics;
+    diagnostics = DiagnosticsSnapshot();
+    diagnostics.updatedAtMs = state.uptimeMs;
+
+    auto add = [&](DiagnosticSeverity severity, DiagnosticCode code, const char* title, const char* details, const char* recommendation) {
+        addDiagnostic(diagnostics, previousCodes, previousFirstSeen, previousCount, severity, code, title, details, recommendation, state.uptimeMs);
+    };
+
+    char details[64] = {};
+    const bool acExpected = state.controllerState.mode == DeviceMode::Auto
+        ? (autoSettings.allowAcCooling || autoSettings.allowAcHeating || autoSettings.keepAcFanOnInAuto || autoSettings.keepAcFanOnWithVent)
+        : state.settings.manualAcPower;
+    if (acExpected && (!state.ac.bound || state.ac.communicationError || !state.ac.hasReceivedFrame)) {
+        snprintf(details, sizeof(details), "bound=%u err=%u last=%lus", state.ac.bound ? 1 : 0, state.ac.communicationError ? 1 : 0, state.ac.hasReceivedFrame ? state.ac.lastFrameAgeMs / 1000UL : 0UL);
+        add(DiagnosticSeverity::Error, DiagnosticCode::AcLinkLost, "AC LINK LOST", details, "Check AC bus wiring / restart AC");
+    }
+
+    if (state.ac.hasAnyFrame && state.ac.lastAnyFrameAgeMs < 10000UL && (!state.ac.hasReceivedFrame || state.ac.lastFrameAgeMs > 10000UL)) {
+        snprintf(details, sizeof(details), "bus active dst=0x%02X local=0x%02X", state.ac.lastFrameDestinationAddress, state.ac.controllerAddress);
+        add(DiagnosticSeverity::Warning, DiagnosticCode::AcBusActiveButDeviceNotAddressed, "AC BUS NO ESP", details, "Restart AC with ESP connected");
+    }
+
+    if (state.controllerState.mode == DeviceMode::Auto && autoStatus.needCooling && !autoStatus.ventCoolingAllowedNow && !autoStatus.acCoolingAllowedNow) {
+        snprintf(details, sizeof(details), "dT=%.1f AC=%u VCool=%u", autoStatus.deltaTempC, autoStatus.acCoolingAllowedNow ? 1 : 0, autoStatus.ventCoolingAllowedNow ? 1 : 0);
+        add(DiagnosticSeverity::Error, DiagnosticCode::CoolingRequiredButUnavailable, "COOLING UNAVAILABLE", details, "Check AC/VFD or auto settings");
+    }
+
+    if (state.controllerState.mode == DeviceMode::Auto && autoStatus.needHeating && !autoStatus.acHeatingAllowedNow) {
+        snprintf(details, sizeof(details), "dT=%.1f AC heat=%u", autoStatus.deltaTempC, autoStatus.acHeatingAllowedNow ? 1 : 0);
+        add(DiagnosticSeverity::Error, DiagnosticCode::HeatingRequiredButUnavailable, "HEATING UNAVAILABLE", details, "Check AC link / heat setting");
+    }
+
+    bool indoorAssigned = false;
+    bool outdoorAssigned = false;
+    uint8_t unassignedConnected = 0;
+    for (uint8_t i = 0; i < state.temperatures.sensorCount && i < TEMP_MAX_SENSORS; i++) {
+        const auto& sensor = state.temperatures.sensors[i];
+        if (!sensor.enabled) {
+            continue;
+        }
+        if (sensor.role == TempSensorRole::Indoor) {
+            indoorAssigned = true;
+        } else if (sensor.role == TempSensorRole::Outdoor) {
+            outdoorAssigned = true;
+        } else if (sensor.connected && sensor.role == TempSensorRole::Unknown) {
+            unassignedConnected++;
+        }
+    }
+
+    if (!indoorAssigned || !state.environment.hasIndoorTemp) {
+        snprintf(details, sizeof(details), "assigned=%u valid=%u", indoorAssigned ? 1 : 0, state.environment.hasIndoorTemp ? 1 : 0);
+        add(DiagnosticSeverity::Error, DiagnosticCode::IndoorSensorMissing, "INDOOR TEMP MISSING", details, "Assign/check indoor DS18B20");
+    }
+
+    if (autoSettings.allowVentCooling && (!outdoorAssigned || !state.environment.hasOutdoorTemp)) {
+        snprintf(details, sizeof(details), "assigned=%u valid=%u", outdoorAssigned ? 1 : 0, state.environment.hasOutdoorTemp ? 1 : 0);
+        add(DiagnosticSeverity::Error, DiagnosticCode::OutdoorSensorMissing, "OUTDOOR TEMP MISSING", details, "Assign/check outdoor DS18B20");
+    }
+
+    if (state.vfd.consecutiveErrorCount >= 5 || (state.vfd.communicationError && state.vfd.hasActivity && state.vfd.lastActivityAgeMs > 10000UL)) {
+        snprintf(details, sizeof(details), "consec=%u last=0x%02X", state.vfd.consecutiveErrorCount, state.vfd.lastErrorCode);
+        add(DiagnosticSeverity::Error, DiagnosticCode::VfdLinkLost, "VFD LINK LOST", details, "Check RS485 / VFD power");
+    } else if (state.vfd.consecutiveErrorCount >= 3) {
+        snprintf(details, sizeof(details), "consec=%u total=%lu", state.vfd.consecutiveErrorCount, (unsigned long)state.vfd.errorCount);
+        add(DiagnosticSeverity::Warning, DiagnosticCode::VfdCommunicationUnstable, "VFD LINK UNSTABLE", details, "Check RS485 timing/wiring");
+    }
+
+    if (state.controllerState.mode == DeviceMode::Safe) {
+        add(DiagnosticSeverity::Error, DiagnosticCode::AutoSafeModeActive, "AUTO SAFE ACTIVE", autoStatus.reason, "Fix critical input data");
+    }
+
+    if (!state.wifiConnected) {
+        add(DiagnosticSeverity::Warning, DiagnosticCode::WifiDisconnected, "WIFI DISCONNECTED", "local control active", "Check Wi-Fi router/settings");
+    }
+
+    if (state.homeAssistant.enabled && !state.homeAssistant.connected) {
+        add(DiagnosticSeverity::Warning, DiagnosticCode::HomeAssistantDisconnected, "HA DISCONNECTED", "MQTT bridge offline", "Check MQTT broker/network");
+    }
+
+    if (unassignedConnected > 0) {
+        snprintf(details, sizeof(details), "unknown connected=%u", unassignedConnected);
+        add(DiagnosticSeverity::Warning, DiagnosticCode::UnassignedTemperatureSensorsDetected, "TEMP SENSOR UNKNOWN", details, "Assign sensors on Temp page");
+    }
+
+    if (autoSettings.targetTempC < 16.0f || autoSettings.targetTempC > 30.0f) {
+        snprintf(details, sizeof(details), "target=%.1f", autoSettings.targetTempC);
+        add(DiagnosticSeverity::Error, DiagnosticCode::SettingsInvalid, "AUTO SETTINGS INVALID", details, "Reset or fix auto settings");
+    }
+
+    state.diagnostics = diagnostics;
+    state.controllerState.warningCount = diagnostics.warningCount;
+    state.controllerState.errorCount = diagnostics.errorCount;
 }
 
 

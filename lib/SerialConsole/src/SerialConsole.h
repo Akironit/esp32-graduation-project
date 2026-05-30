@@ -104,6 +104,7 @@ private:
     void printTemperatureStateStatus();
     void printDisplayStateStatus();
     void printAcStatus();
+    void printDiagnostics();
     void printAutoConfig(const AutoControlSettings& settings);
 
     uint16_t parseHexU16(const String& value, bool& ok);

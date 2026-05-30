@@ -19,12 +19,60 @@ struct AcStateSnapshot {
     bool updatePending = false;
     bool framePending = false;
     bool debugEnabled = false;
+    bool hasAnyFrame = false;
+    unsigned long lastAnyFrameAgeMs = 0;
+    uint8_t lastFrameSourceAddress = 0;
+    uint8_t lastFrameDestinationAddress = 0;
+    uint8_t lastFrameType = 0;
     bool hasReceivedFrame = false;
     unsigned long lastFrameAgeMs = 0;
     bool communicationError = false;
     uint8_t consecutiveErrorCount = 0;
     uint32_t errorCount = 0;
     uint8_t updateFields = 0;
+};
+
+enum class DiagnosticSeverity : uint8_t {
+    Info = 0,
+    Warning,
+    Error
+};
+
+enum class DiagnosticCode : uint8_t {
+    AcLinkLost = 0,
+    AcBusActiveButDeviceNotAddressed,
+    CoolingRequiredButUnavailable,
+    HeatingRequiredButUnavailable,
+    VfdLinkLost,
+    VfdCommunicationUnstable,
+    IndoorSensorMissing,
+    OutdoorSensorMissing,
+    WifiDisconnected,
+    HomeAssistantDisconnected,
+    UnassignedTemperatureSensorsDetected,
+    AutoSafeModeActive,
+    SettingsInvalid
+};
+
+struct DiagnosticItem {
+    DiagnosticSeverity severity = DiagnosticSeverity::Info;
+    DiagnosticCode code = DiagnosticCode::SettingsInvalid;
+    bool active = false;
+    char title[32] = "";
+    char details[64] = "";
+    char recommendation[64] = "";
+    uint32_t firstSeenMs = 0;
+    uint32_t lastSeenMs = 0;
+};
+
+static constexpr uint8_t MAX_DIAGNOSTIC_ITEMS = 16;
+
+struct DiagnosticsSnapshot {
+    DiagnosticItem items[MAX_DIAGNOSTIC_ITEMS];
+    uint8_t itemCount = 0;
+    uint8_t warningCount = 0;
+    uint8_t errorCount = 0;
+    uint32_t updatedAtMs = 0;
 };
 
 struct TemperatureStateSnapshot {
@@ -135,8 +183,8 @@ enum class ControllerActivity : uint8_t {
 struct ControllerStateSnapshot {
     DeviceMode mode = DeviceMode::Auto;
     ControllerActivity activity = ControllerActivity::Normal;
-    uint8_t warningCount = 1;
-    uint8_t errorCount = 1;
+    uint8_t warningCount = 0;
+    uint8_t errorCount = 0;
 };
 
 struct EnvironmentStateSnapshot {
@@ -179,6 +227,7 @@ struct DeviceState {
     DisplayStateSnapshot display;
     HomeAssistantStateSnapshot homeAssistant;
     VentilationStateSnapshot ventilation;
+    DiagnosticsSnapshot diagnostics;
 
     unsigned long uptimeMs = 0;
     uint32_t uptimeSeconds = 0;

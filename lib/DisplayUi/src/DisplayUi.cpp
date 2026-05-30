@@ -402,6 +402,7 @@ void DisplayUi::nextPage() {
     const uint8_t next = (getPageIndex() + 1) % static_cast<uint8_t>(Page::Count);
     currentPage = static_cast<Page>(next);
     tempPageMode = TempPageMode::View;
+    diagnosticsScrollMode = false;
     dirty = true;
     fullRedraw = true;
     shellRedraw = true;
@@ -412,6 +413,7 @@ void DisplayUi::previousPage() {
     const uint8_t previous = (getPageIndex() + count - 1) % count;
     currentPage = static_cast<Page>(previous);
     tempPageMode = TempPageMode::View;
+    diagnosticsScrollMode = false;
     dirty = true;
     fullRedraw = true;
     shellRedraw = true;
@@ -425,6 +427,7 @@ void DisplayUi::setPage(Page page) {
     currentPage = page;
     interactionMode = InteractionMode::View;
     tempPageMode = TempPageMode::View;
+    diagnosticsScrollMode = false;
     dirty = true;
     fullRedraw = true;
     shellRedraw = true;
@@ -447,6 +450,7 @@ DisplayUi::Action DisplayUi::handleButton(Button button, bool longPress, DeviceS
         currentPage = Page::Overview;
         interactionMode = InteractionMode::View;
         tempPageMode = TempPageMode::View;
+        diagnosticsScrollMode = false;
         dirty = true;
         fullRedraw = true;
         shellRedraw = true;
@@ -456,6 +460,10 @@ DisplayUi::Action DisplayUi::handleButton(Button button, bool longPress, DeviceS
 
     if (currentPage == Page::Temperatures) {
         return handleTemperatureButton(button, longPress, state.temperatures);
+    }
+
+    if (currentPage == Page::Diagnostics) {
+        return handleDiagnosticsButton(button, longPress, state);
     }
 
     if (interactionMode == InteractionMode::View) {
@@ -1433,15 +1441,192 @@ void DisplayUi::drawAutoSettingsList(const AutoControlSettings& autoSettings) {
 }
 
 void DisplayUi::drawDiagnostics(const DeviceState& state) {
-    if (fullRedraw) {
-        drawPanel(10, 42, 300, 64, state.controllerState.errorCount == 0 ? COLOR_OK : COLOR_DANGER);
-        drawPanel(10, 116, 300, 92, COLOR_WARN);
+    struct DiagnosticsLine {
+        String text;
+        uint16_t color;
+        bool section;
+    };
+
+    static DiagnosticsLine lines[64];
+    uint8_t lineCount = 0;
+    auto addLine = [&](const String& text, uint16_t color, bool section = false) {
+        if (lineCount >= 64) {
+            return;
+        }
+        String clipped = text;
+        if (clipped.length() > 43) {
+            clipped = clipped.substring(0, 42) + "~";
+        }
+        lines[lineCount++] = {clipped, color, section};
+    };
+    auto addSection = [&](const char* title) {
+        addLine(String(title), COLOR_ACCENT, true);
+    };
+    auto secondsText = [](unsigned long ageMs) {
+        return String(ageMs / 1000UL) + "s";
+    };
+
+    if (state.diagnostics.errorCount > 0) {
+        addSection("ERRORS");
+        for (uint8_t i = 0; i < state.diagnostics.itemCount; i++) {
+            const DiagnosticItem& item = state.diagnostics.items[i];
+            if (item.active && item.severity == DiagnosticSeverity::Error) {
+                addLine(String("E ") + item.title + " | " + item.details, COLOR_DANGER);
+                addLine(String("  ") + item.recommendation, COLOR_MUTED);
+            }
+        }
     }
 
-    drawTextBox(0, 20, 52, 275, "DIAGNOSTICS", COLOR_MUTED, 1);
-    drawTextBox(1, 20, 72, 275, "Warn " + String(state.controllerState.warningCount) + "  Err " + String(state.controllerState.errorCount), COLOR_TEXT, 2);
-    drawTextBox(2, 20, 128, 275, "AC frame " + String(state.ac.hasReceivedFrame ? state.ac.lastFrameAgeMs : 0) + " ms  err " + String(state.ac.errorCount) + "/" + String(state.ac.consecutiveErrorCount), state.ac.communicationError ? COLOR_DANGER : (state.ac.consecutiveErrorCount > 0 ? COLOR_WARN : COLOR_TEXT), 2);
-    drawTextBox(3, 20, 154, 275, "VFD ok " + String(state.vfd.okCount) + "  err " + String(state.vfd.errorCount) + "/" + String(state.vfd.consecutiveErrorCount), state.vfd.communicationError ? COLOR_DANGER : COLOR_MUTED, 2);
+    if (state.diagnostics.warningCount > 0) {
+        addSection("WARNINGS");
+        for (uint8_t i = 0; i < state.diagnostics.itemCount; i++) {
+            const DiagnosticItem& item = state.diagnostics.items[i];
+            if (item.active && item.severity == DiagnosticSeverity::Warning) {
+                addLine(String("W ") + item.title + " | " + item.details, COLOR_WARN);
+                addLine(String("  ") + item.recommendation, COLOR_MUTED);
+            }
+        }
+    }
+
+    addSection("AC");
+    char buffer[96];
+    snprintf(buffer, sizeof(buffer), "ADDR 0x%02X LINK %s RX any %s me %s",
+        state.ac.controllerAddress,
+        state.ac.communicationError ? "ERR" : (state.ac.bound ? "OK" : "WAIT"),
+        state.ac.hasAnyFrame ? secondsText(state.ac.lastAnyFrameAgeMs).c_str() : "--",
+        state.ac.hasReceivedFrame ? secondsText(state.ac.lastFrameAgeMs).c_str() : "--");
+    addLine(buffer, state.ac.communicationError ? COLOR_DANGER : (state.ac.consecutiveErrorCount > 0 ? COLOR_WARN : COLOR_TEXT));
+    snprintf(buffer, sizeof(buffer), "FR %s err %lu consec %u dst 0x%02X",
+        state.ac.hasReceivedFrame ? "yes" : "no",
+        (unsigned long)state.ac.errorCount,
+        state.ac.consecutiveErrorCount,
+        state.ac.lastFrameDestinationAddress);
+    addLine(buffer, COLOR_MUTED);
+    snprintf(buffer, sizeof(buffer), "TEMP ctrl %u ac %d mode %u fan %u",
+        state.ac.controllerTemp,
+        (int)state.ac.temperature,
+        state.ac.mode,
+        state.ac.fanMode);
+    addLine(buffer, COLOR_MUTED);
+
+    addSection("VFD");
+    snprintf(buffer, sizeof(buffer), "LINK %s PWR %s STEP %u/6 HZ %s",
+        state.vfd.communicationError ? "ERR" : (state.vfd.consecutiveErrorCount > 0 ? "WAIT" : (state.vfd.online ? "OK" : "OFF")),
+        state.vfd.running ? "ON" : "OFF",
+        state.vfd.actualStep,
+        state.vfd.hasActualFrequency ? String(state.vfd.actualFrequencyHz, 1).c_str() : "--");
+    addLine(buffer, state.vfd.communicationError ? COLOR_DANGER : (state.vfd.consecutiveErrorCount >= 3 ? COLOR_WARN : COLOR_TEXT));
+    snprintf(buffer, sizeof(buffer), "TX %lu RX %lu ERR %lu CONSEC %u",
+        (unsigned long)state.vfd.requestCount,
+        (unsigned long)state.vfd.okCount,
+        (unsigned long)state.vfd.errorCount,
+        state.vfd.consecutiveErrorCount);
+    addLine(buffer, COLOR_MUTED);
+    snprintf(buffer, sizeof(buffer), "LAST %s tok %lu err 0x%02X age %s",
+        state.vfd.lastAction,
+        (unsigned long)state.vfd.lastToken,
+        state.vfd.lastErrorCode,
+        state.vfd.hasActivity ? secondsText(state.vfd.lastActivityAgeMs).c_str() : "--");
+    addLine(buffer, COLOR_MUTED);
+
+    addSection("TEMP");
+    String indoor = state.environment.hasIndoorTemp ? String(state.environment.indoorTempC, 1) + "C" : "--";
+    String outdoor = state.environment.hasOutdoorTemp ? String(state.environment.outdoorTempC, 1) + "C" : "--";
+    addLine(String("IN ") + indoor + "  OUT " + outdoor + "  found " + String(state.temperatures.sensorCount), COLOR_TEXT);
+    uint8_t unassigned = 0;
+    for (uint8_t i = 0; i < state.temperatures.sensorCount && i < TEMP_MAX_SENSORS; i++) {
+        const TemperatureStateSnapshot::Sensor& sensor = state.temperatures.sensors[i];
+        if (sensor.enabled && sensor.connected && sensor.role == TempSensorRole::Unknown) {
+            unassigned++;
+        }
+    }
+    addLine(String("BUS unknown ") + String(unassigned) + " next scan bg", unassigned > 0 ? COLOR_WARN : COLOR_MUTED);
+
+    addSection("NET");
+    addLine(String("WIFI ") + (state.wifiConnected ? "OK " : "OFF ") + state.ip.toString(), state.wifiConnected ? COLOR_TEXT : COLOR_WARN);
+    addLine(String("HA ") + (state.homeAssistant.connected ? "OK " : "OFF ")
+        + "pub " + (state.homeAssistant.hasPublished ? secondsText(state.homeAssistant.lastPublishAgeMs) : String("--")),
+        state.homeAssistant.connected ? COLOR_TEXT : COLOR_WARN);
+
+    addSection("AUTO");
+    const float deltaTempC = state.environment.hasIndoorTemp
+        ? state.environment.indoorTempC - state.environment.targetIndoorTempC
+        : 0.0f;
+    const bool needCooling = state.environment.hasIndoorTemp && deltaTempC > state.environment.coolingStartDeltaC;
+    const bool needHeating = state.environment.hasIndoorTemp && deltaTempC < -state.environment.heatingStartDeltaC;
+    addLine(String("MODE ") + deviceModeName(state.controllerState.mode)
+        + " ACT " + activityName(state.controllerState.activity),
+        state.controllerState.mode == DeviceMode::Safe ? COLOR_DANGER : COLOR_TEXT);
+    addLine(String("NEED cool ") + (needCooling ? "yes" : "no")
+        + " heat " + (needHeating ? "yes" : "no")
+        + " dT " + String(deltaTempC, 1),
+        needCooling || needHeating ? COLOR_WARN : COLOR_MUTED);
+    addLine(String("WHY ") + state.ventilation.reason,
+        state.controllerState.activity == ControllerActivity::Error ? COLOR_DANGER : COLOR_MUTED);
+    snprintf(buffer, sizeof(buffer), "DES VFD %s S%u AC m%u t%d",
+        state.ventilation.desiredVfdPower ? "ON" : "OFF",
+        state.ventilation.desiredVfdStep,
+        state.ac.mode,
+        (int)state.ac.temperature);
+    addLine(buffer, COLOR_MUTED);
+
+    addSection("SYS");
+    addLine(String("UP ") + state.uptimeText + " HEAP " + String(ESP.getFreeHeap() / 1024) + "k", COLOR_MUTED);
+
+    if (lineCount == 0) {
+        addLine("No diagnostics", COLOR_OK);
+    }
+
+    const uint8_t maxOffset = lineCount > DIAG_VISIBLE_ROWS ? lineCount - DIAG_VISIBLE_ROWS : 0;
+    if (diagnosticsScrollOffset > maxOffset) {
+        diagnosticsScrollOffset = maxOffset;
+    }
+
+    const bool structureChanged = fullRedraw
+        || !diagnosticsPageCacheValid
+        || lastDiagnosticsScrollOffset != diagnosticsScrollOffset
+        || lastDiagnosticsScrollMode != diagnosticsScrollMode
+        || lastDiagnosticsLineCount != lineCount;
+    if (structureChanged) {
+        tft.fillRect(8, 28, 304, 184, COLOR_BG);
+        resetLineCache();
+    }
+
+    for (uint8_t row = 0; row < DIAG_VISIBLE_ROWS; row++) {
+        const uint8_t index = diagnosticsScrollOffset + row;
+        const int16_t y = 30 + row * 15;
+        if (index >= lineCount) {
+            drawTextBox(row, 14, y, 292, "", COLOR_MUTED, 1);
+            continue;
+        }
+
+        if (lines[index].section && structureChanged) {
+            tft.drawFastHLine(14, y + 12, 292, COLOR_LINE);
+        }
+        drawTextBox(row, 14, y, 292, lines[index].text, lines[index].color, 1);
+    }
+
+    tft.fillRect(311, 30, 5, 180, COLOR_BG);
+    if (lineCount > DIAG_VISIBLE_ROWS) {
+        const int16_t trackY = 34;
+        const int16_t trackH = 170;
+        tft.drawFastVLine(313, trackY, trackH, COLOR_LINE);
+        int16_t barH = (trackH * DIAG_VISIBLE_ROWS) / lineCount;
+        if (barH < 12) {
+            barH = 12;
+        }
+        const uint8_t offsetDivider = maxOffset == 0 ? 1 : maxOffset;
+        const int16_t barY = trackY + ((trackH - barH) * diagnosticsScrollOffset) / offsetDivider;
+        tft.fillRect(312, barY, 3, barH, diagnosticsScrollMode ? COLOR_TITLE : COLOR_ACCENT);
+    }
+
+    const char* hint = diagnosticsScrollMode ? "LEFT/RIGHT scroll  OK exit  BACK exit" : "OK scroll  BACK overview";
+    drawTextBox(13, 14, 202, 292, hint, COLOR_WARN, 1);
+
+    lastDiagnosticsScrollOffset = diagnosticsScrollOffset;
+    lastDiagnosticsScrollMode = diagnosticsScrollMode;
+    lastDiagnosticsLineCount = lineCount;
+    diagnosticsPageCacheValid = true;
 }
 
 void DisplayUi::drawPlaceholder(const char* title, const char* line1, const char* line2) {
@@ -1452,6 +1637,40 @@ void DisplayUi::drawPlaceholder(const char* title, const char* line1, const char
     drawTextBox(0, 24, 72, 260, title, COLOR_ACCENT, 2);
     drawTextBox(1, 24, 104, 260, line1, COLOR_TEXT, 2);
     drawTextBox(2, 24, 130, 260, line2, COLOR_MUTED, 2);
+}
+
+uint8_t DisplayUi::diagnosticsLineCount(const DeviceState& state) const {
+    uint8_t count = 0;
+    auto add = [&](uint8_t lines = 1) {
+        const uint16_t next = (uint16_t)count + lines;
+        count = next > 255 ? 255 : (uint8_t)next;
+    };
+
+    if (state.diagnostics.errorCount > 0) {
+        add();
+        for (uint8_t i = 0; i < state.diagnostics.itemCount; i++) {
+            if (state.diagnostics.items[i].active && state.diagnostics.items[i].severity == DiagnosticSeverity::Error) {
+                add(2);
+            }
+        }
+    }
+
+    if (state.diagnostics.warningCount > 0) {
+        add();
+        for (uint8_t i = 0; i < state.diagnostics.itemCount; i++) {
+            if (state.diagnostics.items[i].active && state.diagnostics.items[i].severity == DiagnosticSeverity::Warning) {
+                add(2);
+            }
+        }
+    }
+
+    add(4); // AC section
+    add(4); // VFD section
+    add(3); // TEMP section
+    add(3); // NET section
+    add(5); // AUTO section
+    add(2); // SYS section
+    return count;
 }
 
 const char* DisplayUi::getPageName(Page page) const {
@@ -2217,6 +2436,72 @@ DisplayUi::Action DisplayUi::handleTemperatureButton(Button button, bool longPre
                 case Button::Right:
                     break;
             }
+            break;
+    }
+
+    return action;
+}
+
+DisplayUi::Action DisplayUi::handleDiagnosticsButton(Button button, bool longPress, const DeviceState& state) {
+    Action action;
+    if (longPress) {
+        return action;
+    }
+
+    const uint8_t lineCount = diagnosticsLineCount(state);
+    const uint8_t maxOffset = lineCount > DIAG_VISIBLE_ROWS ? lineCount - DIAG_VISIBLE_ROWS : 0;
+
+    if (diagnosticsScrollMode) {
+        switch (button) {
+            case Button::Left:
+                if (diagnosticsScrollOffset > 0) {
+                    diagnosticsScrollOffset--;
+                    dirty = true;
+                    fullRedraw = false;
+                }
+                break;
+            case Button::Right:
+                if (diagnosticsScrollOffset < maxOffset) {
+                    diagnosticsScrollOffset++;
+                    dirty = true;
+                    fullRedraw = false;
+                }
+                break;
+            case Button::Ok:
+            case Button::Back:
+                diagnosticsScrollMode = false;
+                dirty = true;
+                fullRedraw = false;
+                break;
+        }
+        return action;
+    }
+
+    switch (button) {
+        case Button::Left:
+            previousPage();
+            Logger::debug(TAG_UI, "DIAG VIEW: page previous");
+            break;
+        case Button::Right:
+            nextPage();
+            Logger::debug(TAG_UI, "DIAG VIEW: page next");
+            break;
+        case Button::Ok:
+            diagnosticsScrollMode = true;
+            if (diagnosticsScrollOffset > maxOffset) {
+                diagnosticsScrollOffset = maxOffset;
+            }
+            dirty = true;
+            fullRedraw = false;
+            Logger::debug(TAG_UI, "DIAG scroll mode entered");
+            break;
+        case Button::Back:
+            currentPage = Page::Overview;
+            diagnosticsScrollMode = false;
+            dirty = true;
+            fullRedraw = true;
+            shellRedraw = true;
+            Logger::debug(TAG_UI, "DIAG BACK: return to Overview");
             break;
     }
 
