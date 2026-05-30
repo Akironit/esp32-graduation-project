@@ -121,6 +121,11 @@ private:
     uint32_t okCount = 0;
     uint32_t errorCount = 0;
     uint32_t crcErrorCount = 0;
+    uint32_t timeoutErrorCount = 0;
+    uint32_t packetErrorCount = 0;
+    uint32_t malformedErrorCount = 0;
+    uint32_t exceptionErrorCount = 0;
+    uint32_t suppressedRxErrorLogCount = 0;
     uint8_t consecutiveErrorCount = 0;
     uint32_t lastToken = 0;
     uint8_t lastErrorCode = 0;
@@ -134,6 +139,7 @@ private:
     bool communicationError = false;
     unsigned long lastActivityMs = 0;
     unsigned long lastOkMs = 0;
+    unsigned long lastRxErrorSummaryMs = 0;
     bool pollFrequencyNext = false;
 
     uint32_t nextToken();

@@ -74,6 +74,21 @@ void ClimateAlgorithm::update() {
     }
 
     if (state->controllerState.mode == DeviceMode::Manual) {
+        if (settings.manualVentCompensationEnabled) {
+            updateManualVentCompensation();
+            return;
+        }
+        if (manualVentCompensationActive) {
+            const uint8_t manualStep = state->settings.manualVfdPower
+                ? clampStep(state->settings.manualVfdStep)
+                : 0;
+            status.desiredVfdStep = manualStep;
+            status.desiredVfdPower = manualStep > 0;
+            status.desiredVfdHz = vfdStepToHz(manualStep);
+            status.desiredAcPower = false;
+            applyDesiredState(false);
+        }
+        manualVentCompensationActive = false;
         state->controllerState.activity = ControllerActivity::Hold;
         status.activity = ControllerActivity::Hold;
         status.lastDecisionMs = millis();
@@ -124,6 +139,7 @@ void ClimateAlgorithm::update() {
 
 void ClimateAlgorithm::setSettings(const AutoControlSettings& newSettings, bool autosave) {
     const float oldTarget = settings.targetTempC;
+    const bool oldManualVentCompensation = settings.manualVentCompensationEnabled;
     settings = newSettings;
     settings.targetTempC = clampFloat(settings.targetTempC, 16.0f, 30.0f);
     settings.coolingStartDeltaC = clampFloat(settings.coolingStartDeltaC, 0.1f, 5.0f);
@@ -183,6 +199,14 @@ void ClimateAlgorithm::setSettings(const AutoControlSettings& newSettings, bool 
         state->settings.targetIndoorTempC = settings.targetTempC;
     }
 
+    if (oldManualVentCompensation != settings.manualVentCompensationEnabled) {
+        Logger::infof(
+            TAG_AUTO,
+            "Manual vent compensation %s",
+            settings.manualVentCompensationEnabled ? "ON" : "OFF"
+        );
+    }
+
     if (autosave) {
         markSettingsDirty();
     }
@@ -218,6 +242,7 @@ bool ClimateAlgorithm::loadSettings() {
 
     AutoControlSettings loaded = settings;
     loaded.autoEnabled = preferences.getBool("autoEnabled", loaded.autoEnabled);
+    loaded.manualVentCompensationEnabled = preferences.getBool("manVentComp", loaded.manualVentCompensationEnabled);
     loaded.dryRun = preferences.getBool("dryRun", loaded.dryRun);
     loaded.targetTempC = preferences.getFloat("targetTempC", preferences.getFloat("target", loaded.targetTempC));
     loaded.coolingStartDeltaC = preferences.getFloat("coolStart", preferences.getFloat("coolDelta", loaded.coolingStartDeltaC));
@@ -350,6 +375,7 @@ bool ClimateAlgorithm::saveSettings() {
     };
 
     putBoolChanged("autoEnabled", settings.autoEnabled);
+    putBoolChanged("manVentComp", settings.manualVentCompensationEnabled);
     putBoolChanged("dryRun", settings.dryRun);
     putFloatChanged("targetTempC", settings.targetTempC);
     putFloatChanged("coolStart", settings.coolingStartDeltaC);
@@ -605,6 +631,53 @@ void ClimateAlgorithm::updateFastVentCompensation() {
     applyDesiredState();
 }
 
+void ClimateAlgorithm::updateManualVentCompensation() {
+    const unsigned long now = millis();
+    refreshInputs();
+    updateDesiredStateForActivity(ControllerActivity::Idle);
+
+    const uint8_t manualStep = state->settings.manualVfdPower
+        ? clampStep(state->settings.manualVfdStep)
+        : 0;
+    const uint8_t compensationStep = status.requestedVentStepAfterLimit;
+    const bool compensationActive = compensationStep > 0 || status.ventCompensationOffDelayActive;
+    const uint8_t desiredStep = compensationActive ? max(manualStep, compensationStep) : manualStep;
+
+    status.desiredVfdStep = desiredStep;
+    status.desiredVfdPower = desiredStep > 0;
+    status.desiredVfdHz = vfdStepToHz(desiredStep);
+    status.desiredAcPower = false;
+    status.desiredAcMode = 0;
+    status.desiredAcTargetTemp = 0;
+    status.desiredAcFanSpeed = 0;
+    status.acCoolingRatio = 0.0f;
+    status.acHeatingRatio = 0.0f;
+    status.lastDecisionMs = now;
+    status.stateEnteredMs = stateEnteredMs;
+
+    if (compensationActive) {
+        state->controllerState.activity = ControllerActivity::Vent;
+        status.activity = ControllerActivity::Vent;
+        setReason("Manual mode active; exhaust compensation continues via VFD");
+        if (!manualVentCompensationActive) {
+            Logger::debug(TAG_AUTO, "Manual vent compensation active in MANUAL mode");
+        }
+        manualVentCompensationActive = true;
+        applyDesiredState(false);
+        return;
+    }
+
+    state->controllerState.activity = ControllerActivity::Hold;
+    status.activity = ControllerActivity::Hold;
+    setReason("Manual mode active");
+    resetVentCoolingCheck();
+
+    if (manualVentCompensationActive) {
+        manualVentCompensationActive = false;
+        applyDesiredState(false);
+    }
+}
+
 void ClimateAlgorithm::updateVentRequirements(ControllerActivity activity) {
     status.baseVentRequirementStep = settings.autoVentAlwaysOn ? settings.autoVentDefaultStep : 0;
     status.bathCompStep = status.bathExhaustOn ? settings.bathExhaustCompStep : 0;
@@ -710,7 +783,7 @@ void ClimateAlgorithm::updateDesiredStateForActivity(ControllerActivity activity
     }
 }
 
-void ClimateAlgorithm::applyDesiredState() {
+void ClimateAlgorithm::applyDesiredState(bool allowAcControl) {
     setSkippedReason("none");
 
     if (settings.dryRun) {
@@ -723,50 +796,54 @@ void ClimateAlgorithm::applyDesiredState() {
     bool commandSent = false;
     char result[96] = "";
 
-    if (status.desiredAcPower && !state->ac.bound) {
-        setSkippedReason("AC desired but AC is not bound");
-    } else if (status.desiredAcPower) {
-        const bool acCacheMatches = hasAppliedAc
-            && lastAppliedAcPower == status.desiredAcPower
-            && lastAppliedAcMode == status.desiredAcMode
-            && lastAppliedAcTemp == status.desiredAcTargetTemp
-            && lastAppliedAcFan == status.desiredAcFanSpeed;
-        const bool acActualMatches = state->ac.powerOn
-            && state->ac.mode == status.desiredAcMode
-            && state->ac.temperature == status.desiredAcTargetTemp
-            && state->ac.fanMode == status.desiredAcFanSpeed;
-        const bool retryAllowed = now - lastAcCommandMs >= AppConfig::AUTO_COMMAND_RETRY_INTERVAL_MS;
+    if (allowAcControl) {
+        if (status.desiredAcPower && !state->ac.bound) {
+            setSkippedReason("AC desired but AC is not bound");
+        } else if (status.desiredAcPower) {
+            const bool acCacheMatches = hasAppliedAc
+                && lastAppliedAcPower == status.desiredAcPower
+                && lastAppliedAcMode == status.desiredAcMode
+                && lastAppliedAcTemp == status.desiredAcTargetTemp
+                && lastAppliedAcFan == status.desiredAcFanSpeed;
+            const bool acActualMatches = state->ac.powerOn
+                && state->ac.mode == status.desiredAcMode
+                && state->ac.temperature == status.desiredAcTargetTemp
+                && state->ac.fanMode == status.desiredAcFanSpeed;
+            const bool retryAllowed = now - lastAcCommandMs >= AppConfig::AUTO_COMMAND_RETRY_INTERVAL_MS;
 
-        if (!acCacheMatches || (!acActualMatches && retryAllowed)) {
-            if (!state->ac.powerOn) controller->setAcPower(true);
-            if (state->ac.mode != status.desiredAcMode) controller->setAcMode(status.desiredAcMode);
-            if (state->ac.temperature != status.desiredAcTargetTemp) controller->setAcTemperature(status.desiredAcTargetTemp);
-            if (state->ac.fanMode != status.desiredAcFanSpeed) controller->setAcFanMode(status.desiredAcFanSpeed);
-            hasAppliedAc = true;
-            lastAppliedAcPower = status.desiredAcPower;
-            lastAppliedAcMode = status.desiredAcMode;
-            lastAppliedAcTemp = status.desiredAcTargetTemp;
-            lastAppliedAcFan = status.desiredAcFanSpeed;
-            lastAcCommandMs = now;
-            commandSent = true;
-            strlcat(result, "AC applied; ", sizeof(result));
-        } else {
-            setSkippedReason("AC desired state already applied");
-        }
-    } else if (state->ac.powerOn && (status.activity == ControllerActivity::Error || (!settings.keepAcFanOnInAuto && !status.desiredVfdPower))) {
-        const bool retryAllowed = now - lastAcCommandMs >= AppConfig::AUTO_COMMAND_RETRY_INTERVAL_MS;
-        if (!hasAppliedAc || lastAppliedAcPower || retryAllowed) {
-            if (controller->setAcPower(false)) {
+            if (!acCacheMatches || (!acActualMatches && retryAllowed)) {
+                if (!state->ac.powerOn) controller->setAcPower(true);
+                if (state->ac.mode != status.desiredAcMode) controller->setAcMode(status.desiredAcMode);
+                if (state->ac.temperature != status.desiredAcTargetTemp) controller->setAcTemperature(status.desiredAcTargetTemp);
+                if (state->ac.fanMode != status.desiredAcFanSpeed) controller->setAcFanMode(status.desiredAcFanSpeed);
                 hasAppliedAc = true;
-                lastAppliedAcPower = false;
-                lastAppliedAcMode = 0;
-                lastAppliedAcTemp = 0;
-                lastAppliedAcFan = 0;
+                lastAppliedAcPower = status.desiredAcPower;
+                lastAppliedAcMode = status.desiredAcMode;
+                lastAppliedAcTemp = status.desiredAcTargetTemp;
+                lastAppliedAcFan = status.desiredAcFanSpeed;
                 lastAcCommandMs = now;
                 commandSent = true;
-                strlcat(result, "AC off applied; ", sizeof(result));
+                strlcat(result, "AC applied; ", sizeof(result));
+            } else {
+                setSkippedReason("AC desired state already applied");
+            }
+        } else if (state->ac.powerOn && (status.activity == ControllerActivity::Error || (!settings.keepAcFanOnInAuto && !status.desiredVfdPower))) {
+            const bool retryAllowed = now - lastAcCommandMs >= AppConfig::AUTO_COMMAND_RETRY_INTERVAL_MS;
+            if (!hasAppliedAc || lastAppliedAcPower || retryAllowed) {
+                if (controller->setAcPower(false)) {
+                    hasAppliedAc = true;
+                    lastAppliedAcPower = false;
+                    lastAppliedAcMode = 0;
+                    lastAppliedAcTemp = 0;
+                    lastAppliedAcFan = 0;
+                    lastAcCommandMs = now;
+                    commandSent = true;
+                    strlcat(result, "AC off applied; ", sizeof(result));
+                }
             }
         }
+    } else if (status.desiredAcPower) {
+        setSkippedReason("AC control skipped in manual vent compensation");
     }
 
     auto noteVfdCommand = [&](const char* action, const char* reason, bool accepted) {
@@ -779,7 +856,7 @@ void ClimateAlgorithm::applyDesiredState() {
         status.lastVfdCommandAction[sizeof(status.lastVfdCommandAction) - 1] = '\0';
         strncpy(status.lastVfdCommandReason, reason, sizeof(status.lastVfdCommandReason) - 1);
         status.lastVfdCommandReason[sizeof(status.lastVfdCommandReason) - 1] = '\0';
-        Logger::infof(
+        Logger::debugf(
             TAG_AUTO,
             "VFD schedule source=AUTO action=%s accepted=%u desiredPower=%u desiredStep=%u requestedHz=%.1f lastPower=%u lastStep=%u lastHz=%.1f running=%u actualHz=%.1f reason=%s",
             action,

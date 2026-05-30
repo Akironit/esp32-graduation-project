@@ -10,6 +10,7 @@ constexpr uint16_t REG_COMMAND_FREQUENCY = 0x2001;
 constexpr uint16_t REG_STATUS_WORD = 0x2100;
 constexpr uint16_t REG_OPERATION_FREQUENCY = 0x3000;
 constexpr unsigned long ONLINE_TIMEOUT_MS = 10000;
+constexpr unsigned long RX_ERROR_SUMMARY_INTERVAL_MS = 30000;
 
 constexpr uint8_t ERR_TIMEOUT = 0xE0;
 constexpr uint8_t ERR_PACKET = 0xE1;
@@ -366,7 +367,7 @@ bool VfdController::enqueueOperation(const VfdOperation& operation) {
     }
 
     if (opCount >= OP_QUEUE_SIZE) {
-        Logger::errorf(TAG_VFD, "Request queue full action=%s address=0x%04X", operation.action, operation.address);
+        Logger::warningf(TAG_VFD, "Request queue full action=%s address=0x%04X", operation.action, operation.address);
         return false;
     }
 
@@ -597,6 +598,10 @@ void VfdController::handleResponse() {
 
     okCount++;
     everOnline = true;
+    if (consecutiveErrorCount > 0) {
+        Logger::infof(TAG_VFD, "Link recovered after %u consecutive RX errors", consecutiveErrorCount);
+        suppressedRxErrorLogCount = 0;
+    }
     communicationError = false;
     consecutiveErrorCount = 0;
     lastOkMs = millis();
@@ -618,9 +623,15 @@ void VfdController::handleTimeout() {
 
 
 void VfdController::recordTransactionError(uint8_t code, const char* reason) {
+    const unsigned long now = millis();
     errorCount++;
-    if (code == ERR_CRC) {
-        crcErrorCount++;
+    switch (code) {
+        case ERR_TIMEOUT: timeoutErrorCount++; break;
+        case ERR_PACKET: packetErrorCount++; break;
+        case ERR_CRC: crcErrorCount++; break;
+        case ERR_EXCEPTION: exceptionErrorCount++; break;
+        case ERR_MALFORMED: malformedErrorCount++; break;
+        default: break;
     }
     if (consecutiveErrorCount < 255) {
         consecutiveErrorCount++;
@@ -628,15 +639,40 @@ void VfdController::recordTransactionError(uint8_t code, const char* reason) {
 
     lastErrorCode = code;
     activitySeen = true;
-    lastActivityMs = millis();
-    if (consecutiveErrorCount >= LINK_ERROR_THRESHOLD || (everOnline && millis() - lastOkMs > ONLINE_TIMEOUT_MS)) {
+    lastActivityMs = now;
+    if (consecutiveErrorCount >= LINK_ERROR_THRESHOLD || (everOnline && now - lastOkMs > ONLINE_TIMEOUT_MS)) {
         communicationError = true;
     }
 
-    if (code == ERR_TIMEOUT) {
-        Logger::errorf(TAG_VFD, "RX ERR token=%lu code=%02X reason=%s len=%u", (unsigned long)lastToken, code, reason, (unsigned)rxLen);
-    } else {
+    if (consecutiveErrorCount <= 3) {
+        Logger::warningf(
+            TAG_VFD,
+            "RX ERR token=%lu code=%02X reason=%s len=%u consecutive=%u",
+            (unsigned long)lastToken,
+            code,
+            reason,
+            (unsigned)rxLen,
+            consecutiveErrorCount
+        );
         logRawRx(code, reason);
+        return;
+    }
+
+    suppressedRxErrorLogCount++;
+    if (now - lastRxErrorSummaryMs >= RX_ERROR_SUMMARY_INTERVAL_MS) {
+        lastRxErrorSummaryMs = now;
+        Logger::warningf(
+            TAG_VFD,
+            "RX errors summary: timeout=%lu wrong=%lu crc=%lu malformed=%lu exception=%lu suppressed=%lu consecutive=%u",
+            (unsigned long)timeoutErrorCount,
+            (unsigned long)packetErrorCount,
+            (unsigned long)crcErrorCount,
+            (unsigned long)malformedErrorCount,
+            (unsigned long)exceptionErrorCount,
+            (unsigned long)suppressedRxErrorLogCount,
+            consecutiveErrorCount
+        );
+        suppressedRxErrorLogCount = 0;
     }
 }
 
@@ -649,7 +685,7 @@ void VfdController::logRawRx(uint8_t code, const char* reason) {
         offset += snprintf(raw + offset, sizeof(raw) - offset, "%02X ", rxBuffer[i]);
     }
 
-    Logger::warningf(
+    Logger::tracef(
         TAG_VFD,
         "RX ERR token=%lu code=%02X reason=%s len=%u raw=%s",
         (unsigned long)lastToken,

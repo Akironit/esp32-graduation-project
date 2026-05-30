@@ -115,15 +115,17 @@ private:
     uint8_t heldExhaustCompRequirementStep = 0;
     bool exhaustCompDecreasePending = false;
     unsigned long exhaustCompDecreaseStartedMs = 0;
+    bool manualVentCompensationActive = false;
 
     void refreshInputs();
     ControllerActivity calculateActivity();
     ControllerActivity applyStateHold(ControllerActivity requested);
     void applyActivity(ControllerActivity activity);
     void updateFastVentCompensation();
+    void updateManualVentCompensation();
     void updateVentRequirements(ControllerActivity activity);
     void updateDesiredStateForActivity(ControllerActivity activity);
-    void applyDesiredState();
+    void applyDesiredState(bool allowAcControl = true);
     bool inputDataValid() const;
     bool indoorTemperatureValid() const;
     bool outdoorTemperatureValid() const;

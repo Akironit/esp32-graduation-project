@@ -1,5 +1,7 @@
 #include "DeviceController.h"
 
+#include <string.h>
+
 #include "Logger.h"
 
 namespace {
@@ -90,7 +92,7 @@ bool DeviceController::vfdForward(const char* source, bool syncActive) {
         return false;
     }
 
-    Logger::infof(
+    Logger::debugf(
         TAG_ACTION,
         "VFD command source=%s action=forward sync=%u token=%lu hasRequestedHz=%u requestedHz=%.2f lastAction=%s",
         source,
@@ -104,7 +106,11 @@ bool DeviceController::vfdForward(const char* source, bool syncActive) {
     if (!vfd->forward()) {
         return false;
     }
-    Logger::info(TAG_ACTION, "VFD forward");
+    if (strcmp(source, "console") == 0 || strncmp(source, "display", 7) == 0) {
+        Logger::info(TAG_ACTION, "VFD user power ON");
+    } else {
+        Logger::debug(TAG_ACTION, "VFD forward");
+    }
     return true;
 }
 
@@ -114,7 +120,7 @@ bool DeviceController::vfdReverse(const char* source, bool syncActive) {
         return false;
     }
 
-    Logger::infof(
+    Logger::debugf(
         TAG_ACTION,
         "VFD command source=%s action=reverse sync=%u token=%lu hasRequestedHz=%u requestedHz=%.2f lastAction=%s",
         source,
@@ -128,7 +134,11 @@ bool DeviceController::vfdReverse(const char* source, bool syncActive) {
     if (!vfd->reverse()) {
         return false;
     }
-    Logger::info(TAG_ACTION, "VFD reverse");
+    if (strcmp(source, "console") == 0 || strncmp(source, "display", 7) == 0) {
+        Logger::info(TAG_ACTION, "VFD user reverse");
+    } else {
+        Logger::debug(TAG_ACTION, "VFD reverse");
+    }
     return true;
 }
 
@@ -138,7 +148,7 @@ bool DeviceController::vfdStop(const char* source, bool syncActive) {
         return false;
     }
 
-    Logger::infof(
+    Logger::debugf(
         TAG_ACTION,
         "VFD command source=%s action=stop sync=%u token=%lu hasRequestedHz=%u requestedHz=%.2f lastAction=%s",
         source,
@@ -152,7 +162,11 @@ bool DeviceController::vfdStop(const char* source, bool syncActive) {
     if (!vfd->stop()) {
         return false;
     }
-    Logger::info(TAG_ACTION, "VFD stop");
+    if (strcmp(source, "console") == 0 || strncmp(source, "display", 7) == 0) {
+        Logger::info(TAG_ACTION, "VFD user power OFF");
+    } else {
+        Logger::debug(TAG_ACTION, "VFD stop");
+    }
     return true;
 }
 
@@ -162,7 +176,7 @@ bool DeviceController::vfdSetFrequency(float hz, const char* source, bool syncAc
         return false;
     }
 
-    Logger::infof(
+    Logger::debugf(
         TAG_ACTION,
         "VFD command source=%s action=set_frequency sync=%u token=%lu hz=%.2f hasRequestedHz=%u lastRequestedHz=%.2f lastAction=%s",
         source,
@@ -177,7 +191,11 @@ bool DeviceController::vfdSetFrequency(float hz, const char* source, bool syncAc
     if (!vfd->setFrequency(hz)) {
         return false;
     }
-    Logger::infof(TAG_ACTION, "VFD frequency set to %.2f Hz", hz);
+    if (strcmp(source, "console") == 0 || strncmp(source, "display", 7) == 0) {
+        Logger::infof(TAG_ACTION, "VFD user frequency %.2f Hz", hz);
+    } else {
+        Logger::debugf(TAG_ACTION, "VFD frequency set to %.2f Hz", hz);
+    }
     return true;
 }
 
@@ -188,10 +206,10 @@ bool DeviceController::vfdReadRegister(uint16_t address, uint16_t count) {
     }
 
     if (!vfd->readRegister(address, count)) {
-        Logger::infof(TAG_ACTION, "VFD read rejected: queue full token=%lu", (unsigned long)vfd->getLastToken());
+        Logger::debugf(TAG_ACTION, "VFD read rejected: queue full token=%lu", (unsigned long)vfd->getLastToken());
         return false;
     }
-    Logger::infof(TAG_ACTION, "VFD read register address=0x%04X count=%u", address, count);
+    Logger::debugf(TAG_ACTION, "VFD read register address=0x%04X count=%u", address, count);
     return true;
 }
 
@@ -202,10 +220,10 @@ bool DeviceController::vfdWriteRegister(uint16_t address, uint16_t value) {
     }
 
     if (!vfd->writeRegister(address, value)) {
-        Logger::infof(TAG_ACTION, "VFD write rejected: queue full token=%lu", (unsigned long)vfd->getLastToken());
+        Logger::debugf(TAG_ACTION, "VFD write rejected: queue full token=%lu", (unsigned long)vfd->getLastToken());
         return false;
     }
-    Logger::infof(TAG_ACTION, "VFD write register address=0x%04X value=0x%04X", address, value);
+    Logger::debugf(TAG_ACTION, "VFD write register address=0x%04X value=0x%04X", address, value);
     return true;
 }
 

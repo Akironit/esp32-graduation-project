@@ -188,6 +188,27 @@ void App::updateVfdStatus() {
     }
 
     const unsigned long now = millis();
+    const unsigned long lastWriteAckMs = vfd.getLastWriteAckMs();
+    if (lastWriteAckMs != 0 && lastWriteAckMs != lastObservedVfdWriteAckMs) {
+        lastObservedVfdWriteAckMs = lastWriteAckMs;
+        startVfdFastVerify();
+    }
+
+    if (vfdFastVerifyActive && now - vfdFastVerifyStartedMs > AppConfig::VFD_FAST_VERIFY_DURATION_MS) {
+        vfdFastVerifyActive = false;
+    }
+
+    if (vfdFastVerifyActive) {
+        if (now - lastVfdFastVerifyPollMs < AppConfig::VFD_FAST_VERIFY_POLL_INTERVAL_MS) {
+            return;
+        }
+        lastVfdFastVerifyPollMs = now;
+        lastVfdStatusPollMs = now;
+        vfd.pollStatus();
+        vfd.update();
+        return;
+    }
+
     const bool vfdLinkUnstable = vfd.getConsecutiveErrorCount() >= 5 || vfd.hasCommunicationError();
     const unsigned long pollInterval = vfdLinkUnstable
         ? AppConfig::VFD_ERROR_POLL_BACKOFF_MS
@@ -220,7 +241,7 @@ bool App::updateVfdCommandSync() {
 
     if (vfdSyncState == VfdSyncState::WaitingWriteAck) {
         if (vfd.hasRecentWriteAck(pendingVfdAddress, pendingVfdValue, pendingVfdStartedMs)) {
-            Logger::infof(
+            Logger::debugf(
                 TAG_VFD_UI,
                 "VFD command accepted address=0x%04X value=0x%04X desiredPower=%u desiredStep=%u",
                 pendingVfdAddress,
@@ -228,6 +249,7 @@ bool App::updateVfdCommandSync() {
                 pendingVfdDesiredPower ? 1 : 0,
                 pendingVfdDesiredStep
             );
+            startVfdFastVerify();
             vfdSyncState = VfdSyncState::WaitingStatusVerify;
             return false;
         }
@@ -260,16 +282,19 @@ bool App::updateVfdCommandSync() {
 
     if (vfdSyncState == VfdSyncState::WaitingStatusVerify) {
         if (isPendingVfdStatusVerified()) {
-            Logger::infof(
+            Logger::debugf(
                 TAG_VFD_UI,
-                "VFD command verified desiredPower=%u desiredStep=%u actualRunning=%u actualStep=%u actualHz=%.1f",
+                "VFD command verified address=0x%04X desiredPower=%u desiredStep=%u actualRunning=%u actualStep=%u actualHz=%.1f requestedHz=%.1f",
+                pendingVfdAddress,
                 pendingVfdDesiredPower ? 1 : 0,
                 pendingVfdDesiredStep,
                 vfd.isRunning() ? 1 : 0,
                 vfd.getActualStep(),
-                vfd.hasActualFrequency() ? vfd.getActualFrequencyHz() : -1.0f
+                vfd.hasActualFrequency() ? vfd.getActualFrequencyHz() : -1.0f,
+                vfd.hasRequestedFrequency() ? vfd.getRequestedFrequencyHz() : -1.0f
             );
             vfdSyncState = VfdSyncState::Idle;
+            vfdFastVerifyActive = false;
             if (!isVfdDesiredStateReached()) {
                 requestVfdCommandSync("display-sync next");
             }
@@ -284,6 +309,7 @@ bool App::updateVfdCommandSync() {
                 vfd.hasActualFrequency() ? vfd.getActualFrequencyHz() : -1.0f
             );
             vfdSyncState = VfdSyncState::Idle;
+            vfdFastVerifyActive = false;
             if (!isVfdDesiredStateReached()) {
                 requestVfdCommandSync("display-sync next after verify timeout");
             }
@@ -581,6 +607,9 @@ void App::configureIoExpanderInputs() {
     lastGpa6State = ioExpander.digitalRead(MCP_PIN_GPA6);
     lastGpa7State = ioExpander.digitalRead(MCP_PIN_GPA7);
     lastExhaustVentState = ioExpander.digitalRead(MCP_PIN_EXHAUST_VENT);
+    rawExhaustVentState = lastExhaustVentState;
+    rawExhaustVentChangedMs = millis();
+    exhaustDebounceActive = false;
     updateVentilationInputs(lastGpa5State, lastGpa6State, lastGpa7State, lastExhaustVentState);
     buttonBack.begin(true, 50, 500);
     buttonLeft.begin(true, 50, 500);
@@ -602,7 +631,8 @@ void App::updateIoExpanderInputs() {
     }
 
     const unsigned long now = millis();
-    const bool pollButtons = buttonsActive && now - lastButtonPollMs >= AppConfig::BUTTON_POLL_INTERVAL_MS;
+    const bool pollButtons = (buttonsActive || exhaustDebounceActive)
+        && now - lastButtonPollMs >= AppConfig::BUTTON_POLL_INTERVAL_MS;
 
     if (!mcpInterruptA && !mcpInterruptB && !pollButtons) {
         return;
@@ -642,6 +672,7 @@ void App::processIoExpanderPort() {
     const int gpa6State = (portState & (1 << MCP_PIN_GPA6)) ? HIGH : LOW;
     const int gpa7State = (portState & (1 << MCP_PIN_GPA7)) ? HIGH : LOW;
     const int exhaustVentState = (portState & (1 << MCP_PIN_EXHAUST_VENT)) ? HIGH : LOW;
+    const unsigned long now = millis();
 
     if (gpa5State != lastGpa5State) {
         lastGpa5State = gpa5State;
@@ -658,14 +689,23 @@ void App::processIoExpanderPort() {
         handleIoExpanderInputChange(MCP_PIN_GPA7, gpa7State);
     }
 
-    if (exhaustVentState != lastExhaustVentState) {
-        lastExhaustVentState = exhaustVentState;
-        handleIoExpanderInputChange(MCP_PIN_EXHAUST_VENT, exhaustVentState);
+    if (exhaustVentState != rawExhaustVentState) {
+        rawExhaustVentState = exhaustVentState;
+        rawExhaustVentChangedMs = now;
+        exhaustDebounceActive = true;
+        Logger::debugf(TAG_INPUT, "Raw bathroom exhaust input: %s", exhaustVentState == LOW ? "ON" : "OFF");
     }
 
-    updateVentilationInputs(gpa5State, gpa6State, gpa7State, exhaustVentState);
+    if (exhaustDebounceActive && now - rawExhaustVentChangedMs >= AppConfig::EXHAUST_INPUT_DEBOUNCE_MS) {
+        exhaustDebounceActive = false;
+        if (rawExhaustVentState != lastExhaustVentState) {
+            lastExhaustVentState = rawExhaustVentState;
+            handleIoExpanderInputChange(MCP_PIN_EXHAUST_VENT, lastExhaustVentState);
+        }
+    }
 
-    const unsigned long now = millis();
+    updateVentilationInputs(gpa5State, gpa6State, gpa7State, lastExhaustVentState);
+
     const bool backPressed = (portState & (1 << MCP_BUTTON_BACK_PIN)) == 0;
     const bool leftPressed = (portState & (1 << MCP_BUTTON_LEFT_PIN)) == 0;
     const bool rightPressed = (portState & (1 << MCP_BUTTON_RIGHT_PIN)) == 0;
@@ -688,7 +728,12 @@ void App::processIoExpanderPort() {
 
 
 void App::handleIoExpanderInputChange(uint8_t pin, int currentState) {
-    Logger::infof(
+    if (pin == MCP_PIN_EXHAUST_VENT) {
+        Logger::infof(TAG_INPUT, "Bathroom exhaust: %s", currentState == LOW ? "ON" : "OFF");
+        return;
+    }
+
+    Logger::debugf(
         TAG_INPUT,
         "GPA%u changed to %s",
         pin,
@@ -740,20 +785,13 @@ void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
             controller.setAcFanMode(action.uintValue);
             break;
         case DisplayUi::ActionType::VfdStop:
-            requestVfdCommandSync("display stop", 0x2000, 0x0005, false, 0, 0.0f);
+            requestVfdCommandSync("display stop");
             break;
         case DisplayUi::ActionType::VfdForward:
-            requestVfdCommandSync("display forward", 0x2000, 0x0001, true, state.settings.manualVfdStep, vfdStepToHz(state.settings.manualVfdStep));
+            requestVfdCommandSync("display forward");
             break;
         case DisplayUi::ActionType::VfdSetFrequency:
-            requestVfdCommandSync(
-                "display frequency",
-                0x2001,
-                (uint16_t)lroundf(vfdStepToHz(state.settings.manualVfdStep) * 100.0f),
-                state.settings.manualVfdPower,
-                state.settings.manualVfdStep,
-                vfdStepToHz(state.settings.manualVfdStep)
-            );
+            requestVfdCommandSync("display frequency");
             break;
         case DisplayUi::ActionType::AutoSettings:
             climateAlgorithm.setSettings(action.autoSettings);
@@ -803,28 +841,40 @@ void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
 
 
 void App::requestVfdCommandSync(const char* reason) {
-    if (!state.settings.manualVfdPower || state.settings.manualVfdStep == 0) {
+    const AutoControlSettings autoSettings = climateAlgorithm.getSettings();
+    const bool manualVentAssistEnabled = state.controllerState.mode == DeviceMode::Manual
+        && autoSettings.manualVentCompensationEnabled;
+    const uint8_t userStep = state.settings.manualVfdPower
+        ? (state.settings.manualVfdStep > 6 ? 6 : state.settings.manualVfdStep)
+        : 0;
+    const uint8_t ventAssistStep = manualVentAssistEnabled
+        ? state.ventilation.requestedStepAfterLimit
+        : 0;
+    const uint8_t effectiveStep = max(userStep, ventAssistStep);
+    const bool effectivePower = effectiveStep > 0;
+
+    if (!effectivePower) {
         requestVfdCommandSync(reason, 0x2000, 0x0005, false, 0, 0.0f);
         return;
     }
 
-    const float desiredHz = vfdStepToHz(state.settings.manualVfdStep);
+    const float desiredHz = vfdStepToHz(effectiveStep);
     const uint16_t desiredValue = (uint16_t)lroundf(desiredHz * 100.0f);
     const bool requestedFrequencyMatches = vfd.hasRequestedFrequency()
         && fabsf(vfd.getRequestedFrequencyHz() - desiredHz) <= 0.5f;
 
     if (!requestedFrequencyMatches) {
-        requestVfdCommandSync(reason, 0x2001, desiredValue, true, state.settings.manualVfdStep, desiredHz);
+        requestVfdCommandSync(reason, 0x2001, desiredValue, true, effectiveStep, desiredHz);
         return;
     }
 
     if (!vfd.isRunning()) {
-        requestVfdCommandSync(reason, 0x2000, 0x0001, true, state.settings.manualVfdStep, desiredHz);
+        requestVfdCommandSync(reason, 0x2000, 0x0001, true, effectiveStep, desiredHz);
         return;
     }
 
     if (vfd.hasActualFrequency() && fabsf(vfd.getActualFrequencyHz() - desiredHz) > 0.75f) {
-        requestVfdCommandSync(reason, 0x2001, desiredValue, true, state.settings.manualVfdStep, desiredHz);
+        requestVfdCommandSync(reason, 0x2001, desiredValue, true, effectiveStep, desiredHz);
         return;
     }
 
@@ -832,18 +882,50 @@ void App::requestVfdCommandSync(const char* reason) {
 }
 
 
+void App::startVfdFastVerify() {
+    vfdFastVerifyActive = true;
+    vfdFastVerifyStartedMs = millis();
+    lastVfdFastVerifyPollMs = 0;
+}
+
+
 void App::requestVfdCommandSync(const char* reason, uint16_t address, uint16_t value, bool desiredPower, uint8_t desiredStep, float desiredHz) {
+    const unsigned long now = millis();
+    const unsigned long duplicateSinceMs = now > AppConfig::VFD_DUPLICATE_WRITE_SUPPRESS_MS
+        ? now - AppConfig::VFD_DUPLICATE_WRITE_SUPPRESS_MS
+        : 0;
+    if (vfd.hasRecentWriteAck(address, value, duplicateSinceMs)) {
+        Logger::debugf(
+            TAG_VFD_UI,
+            "VFD duplicate write suppressed: %s address=0x%04X value=0x%04X",
+            reason,
+            address,
+            value
+        );
+        pendingVfdAddress = address;
+        pendingVfdValue = value;
+        pendingVfdDesiredPower = desiredPower;
+        pendingVfdDesiredStep = desiredStep;
+        pendingVfdDesiredHz = desiredHz;
+        pendingVfdStartedMs = now;
+        pendingVfdLastSendMs = now;
+        pendingVfdRetryCount = AppConfig::VFD_COMMAND_RETRY_LIMIT;
+        vfdSyncState = VfdSyncState::WaitingStatusVerify;
+        startVfdFastVerify();
+        return;
+    }
+
     pendingVfdAddress = address;
     pendingVfdValue = value;
     pendingVfdDesiredPower = desiredPower;
     pendingVfdDesiredStep = desiredStep;
     pendingVfdDesiredHz = desiredHz;
     pendingVfdRetryCount = 0;
-    pendingVfdStartedMs = millis();
+    pendingVfdStartedMs = now;
     pendingVfdLastSendMs = 0;
     vfdSyncState = VfdSyncState::WaitingWriteAck;
 
-    Logger::infof(
+    Logger::debugf(
         TAG_VFD_UI,
         "VFD sync requested: %s address=0x%04X value=0x%04X desiredPower=%u desiredStep=%u desiredHz=%.1f",
         reason,
@@ -892,10 +974,14 @@ bool App::sendPendingVfdCommand(const char* source) {
 bool App::isPendingVfdStatusVerified() const {
     if (pendingVfdAddress == 0x2000) {
         if (!pendingVfdDesiredPower) {
-            return !vfd.isRunning();
+            return !vfd.isRunning()
+                && (!vfd.hasActualFrequency() || vfd.getActualFrequencyHz() < 1.0f);
         }
 
-        return vfd.isRunning();
+        return vfd.isRunning()
+            && vfd.hasActualFrequency()
+            && fabsf(vfd.getActualFrequencyHz() - pendingVfdDesiredHz) <= 0.75f
+            && vfd.getActualStep() == pendingVfdDesiredStep;
     }
 
     if (pendingVfdAddress == 0x2001) {
@@ -908,18 +994,30 @@ bool App::isPendingVfdStatusVerified() const {
 
 
 bool App::isVfdDesiredStateReached() const {
-    if (!state.settings.manualVfdPower || state.settings.manualVfdStep == 0) {
-        if (!state.settings.manualVfdPower) {
+    const AutoControlSettings autoSettings = climateAlgorithm.getSettings();
+    const bool manualVentAssistEnabled = state.controllerState.mode == DeviceMode::Manual
+        && autoSettings.manualVentCompensationEnabled;
+    const uint8_t userStep = state.settings.manualVfdPower
+        ? (state.settings.manualVfdStep > 6 ? 6 : state.settings.manualVfdStep)
+        : 0;
+    const uint8_t ventAssistStep = manualVentAssistEnabled
+        ? state.ventilation.requestedStepAfterLimit
+        : 0;
+    const uint8_t effectiveStep = max(userStep, ventAssistStep);
+
+    if (effectiveStep == 0) {
+        if (!state.settings.manualVfdPower && ventAssistStep == 0) {
             return !vfd.isRunning() && (!vfd.hasActualFrequency() || vfd.getActualFrequencyHz() < 1.0f);
         }
 
         return vfd.isRunning();
     }
 
-    const float desiredHz = vfdStepToHz(state.settings.manualVfdStep);
+    const float desiredHz = vfdStepToHz(effectiveStep);
     return vfd.isRunning()
         && vfd.hasActualFrequency()
-        && fabsf(vfd.getActualFrequencyHz() - desiredHz) <= 0.75f;
+        && fabsf(vfd.getActualFrequencyHz() - desiredHz) <= 0.75f
+        && vfd.getActualStep() == effectiveStep;
 }
 
 

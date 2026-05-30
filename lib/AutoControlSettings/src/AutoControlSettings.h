@@ -4,6 +4,7 @@
 
 struct AutoControlSettings {
     bool autoEnabled = true;
+    bool manualVentCompensationEnabled = false;
     bool dryRun = true;
     float targetTempC = 22.5f;
     float coolingStartDeltaC = 0.7f;

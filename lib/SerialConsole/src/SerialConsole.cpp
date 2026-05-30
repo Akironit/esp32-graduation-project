@@ -1441,6 +1441,7 @@ void SerialConsole::printAutoHelp() {
     println("auto status");
     println("auto config");
     println("auto enabled on/off");
+    println("auto manual-vent on/off");
     println("auto dry on/off");
     println("auto verbose on/off");
     println("auto target <temp>");
@@ -1896,6 +1897,8 @@ void SerialConsole::processAutoCommand(const String& cmd) {
         println(climateAlgorithm->activityName(status.activity));
         print("dryRun=");
         println(settings.dryRun ? 1 : 0);
+        print("manualVentCompensationEnabled=");
+        println(settings.manualVentCompensationEnabled ? 1 : 0);
         print("diagnosticVerbose=");
         println(settings.diagnosticVerbose ? 1 : 0);
         println("[INPUTS]");
@@ -2084,6 +2087,8 @@ void SerialConsole::processAutoCommand(const String& cmd) {
     bool changed = true;
     if (key == "enabled") {
         changed = parseOnOff(value, settings.autoEnabled);
+    } else if (key == "manual-vent" || key == "manual-vent-comp") {
+        changed = parseOnOff(value, settings.manualVentCompensationEnabled);
     } else if (key == "dry") {
         changed = parseOnOff(value, settings.dryRun);
     } else if (key == "verbose" || key == "log") {
@@ -2241,6 +2246,7 @@ void SerialConsole::printAutoConfig(const AutoControlSettings& settings) {
     println();
     println("[AUTO] Config");
     println(String("autoEnabled=") + (settings.autoEnabled ? 1 : 0) + "    command: auto enabled on/off");
+    println(String("manualVentCompensationEnabled=") + (settings.manualVentCompensationEnabled ? 1 : 0) + "    command: auto manual-vent on/off");
     println(String("dryRun=") + (settings.dryRun ? 1 : 0) + "    command: auto dry on/off");
     println(String("diagnosticVerbose=") + (settings.diagnosticVerbose ? 1 : 0) + "    command: auto verbose on/off");
     println(String("targetTempC=") + String(settings.targetTempC, 1) + "    command: auto target <temp>");

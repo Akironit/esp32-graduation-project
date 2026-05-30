@@ -64,6 +64,7 @@ enum class AutoSettingType : uint8_t {
 
 enum class AutoSettingId : uint8_t {
     AutoEnabled,
+    ManualVentCompensation,
     DryRun,
     DiagnosticVerbose,
     TargetTemp,
@@ -136,6 +137,7 @@ struct AutoSettingDescriptor {
 
 constexpr AutoSettingDescriptor AUTO_SETTINGS[] = {
     {AutoSettingId::AutoEnabled, "MAIN", "autoEnabled", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
+    {AutoSettingId::ManualVentCompensation, "MAIN", "manualVentComp", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
     {AutoSettingId::DryRun, "MAIN", "dryRun", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
     {AutoSettingId::DiagnosticVerbose, "MAIN", "diagnosticVerbose", AutoSettingType::Bool, 0, 1, 1, 1, 0, ""},
     {AutoSettingId::TargetTemp, "MAIN", "targetTempC", AutoSettingType::Float, 16.0f, 30.0f, 0.5f, 1.0f, 1, "C"},
@@ -264,6 +266,7 @@ float clampAutoValue(float value, const AutoSettingDescriptor& descriptor) {
 float getAutoSettingValue(const AutoControlSettings& settings, AutoSettingId id) {
     switch (id) {
         case AutoSettingId::AutoEnabled: return settings.autoEnabled ? 1 : 0;
+        case AutoSettingId::ManualVentCompensation: return settings.manualVentCompensationEnabled ? 1 : 0;
         case AutoSettingId::DryRun: return settings.dryRun ? 1 : 0;
         case AutoSettingId::DiagnosticVerbose: return settings.diagnosticVerbose ? 1 : 0;
         case AutoSettingId::TargetTemp: return settings.targetTempC;
@@ -329,6 +332,7 @@ void setAutoSettingValue(AutoControlSettings& settings, AutoSettingId id, float 
     const unsigned long wholeValue = (unsigned long)roundf(value);
     switch (id) {
         case AutoSettingId::AutoEnabled: settings.autoEnabled = value >= 0.5f; break;
+        case AutoSettingId::ManualVentCompensation: settings.manualVentCompensationEnabled = value >= 0.5f; break;
         case AutoSettingId::DryRun: settings.dryRun = value >= 0.5f; break;
         case AutoSettingId::DiagnosticVerbose: settings.diagnosticVerbose = value >= 0.5f; break;
         case AutoSettingId::TargetTemp: settings.targetTempC = value; break;
@@ -717,12 +721,20 @@ void DisplayUi::drawFooter(const DeviceState& state) {
 
     if (lastWarningCount != state.controllerState.warningCount) {
         lastWarningCount = state.controllerState.warningCount;
-        drawWarningIcon(52, FOOTER_Y + 12, state.controllerState.warningCount);
+        if (state.controllerState.warningCount > 0) {
+            drawWarningIcon(52, FOOTER_Y + 12, state.controllerState.warningCount);
+        } else {
+            tft.fillRect(41, FOOTER_Y + 2, 42, 20, COLOR_PANEL);
+        }
     }
 
     if (lastErrorCount != state.controllerState.errorCount) {
         lastErrorCount = state.controllerState.errorCount;
-        drawErrorIcon(98, FOOTER_Y + 12, state.controllerState.errorCount);
+        if (state.controllerState.errorCount > 0) {
+            drawErrorIcon(98, FOOTER_Y + 12, state.controllerState.errorCount);
+        } else {
+            tft.fillRect(87, FOOTER_Y + 2, 42, 20, COLOR_PANEL);
+        }
     }
 
     String uptime = String("Up ") + state.uptimeText;

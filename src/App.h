@@ -30,6 +30,11 @@
 #define RS485_TX2_PIN   32
 #define RS485_RX2_PIN   33
 #define RS485_DERE_PIN  18
+// Recommended GD20 Modbus settings:
+// P14.00 = 1 (slave address)
+// P14.01 = 4 for 19200 baud, or 3 for 9600 baud during diagnostics
+// P14.02 = 1 for 8E1
+// P14.03 = 30 ms, or 50 ms if first-byte / wrong-slave errors appear
 #define RS485_BAUD  19200
 
 #define TEMP_ONE_WIRE_PIN 4
@@ -77,6 +82,7 @@ private:
     void updateModeTransition();
     void applyManualSettingsProfile(const char* reason);
     void updateVentilationInputs(int gpa5State, int gpa6State, int gpa7State, int exhaustState);
+    void startVfdFastVerify();
     void requestVfdCommandSync(const char* reason);
     void requestVfdCommandSync(const char* reason, uint16_t address, uint16_t value, bool desiredPower, uint8_t desiredStep, float desiredHz);
     bool sendPendingVfdCommand(const char* source);
@@ -117,6 +123,10 @@ private:
     uint32_t lastUptimeSecond = UINT32_MAX;
     unsigned long lastVfdStatusPollMs = 0;
     unsigned long lastVfdCommandSyncMs = 0;
+    bool vfdFastVerifyActive = false;
+    unsigned long vfdFastVerifyStartedMs = 0;
+    unsigned long lastVfdFastVerifyPollMs = 0;
+    unsigned long lastObservedVfdWriteAckMs = 0;
     VfdSyncState vfdSyncState = VfdSyncState::Idle;
     uint16_t pendingVfdAddress = 0;
     uint16_t pendingVfdValue = 0;
@@ -126,6 +136,9 @@ private:
     bool pendingVfdDesiredPower = false;
     uint8_t pendingVfdDesiredStep = 0;
     float pendingVfdDesiredHz = 0.0f;
+    int rawExhaustVentState = HIGH;
+    unsigned long rawExhaustVentChangedMs = 0;
+    bool exhaustDebounceActive = false;
     bool settingsDirty = false;
     unsigned long lastSettingsChangeMs = 0;
     bool modeTransitionInitialized = false;
