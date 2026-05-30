@@ -195,6 +195,38 @@ constexpr AutoSettingDescriptor AUTO_SETTINGS[] = {
 
 constexpr uint8_t AUTO_SETTINGS_COUNT = sizeof(AUTO_SETTINGS) / sizeof(AUTO_SETTINGS[0]);
 
+enum class SystemSettingId : uint8_t {
+    Wifi,
+    HomeAssistant,
+    AutoSave,
+    SaveNow,
+    VfdPolling,
+    Reboot
+};
+
+enum class SystemSettingType : uint8_t {
+    Bool,
+    Action
+};
+
+struct SystemSettingDescriptor {
+    SystemSettingId id;
+    const char* group;
+    const char* label;
+    SystemSettingType type;
+};
+
+constexpr SystemSettingDescriptor SYSTEM_SETTINGS[] = {
+    {SystemSettingId::Wifi, "NET", "Wi-Fi", SystemSettingType::Bool},
+    {SystemSettingId::HomeAssistant, "NET", "Home Assistant", SystemSettingType::Bool},
+    {SystemSettingId::AutoSave, "SAVE", "Auto save", SystemSettingType::Bool},
+    {SystemSettingId::SaveNow, "SAVE", "Save now", SystemSettingType::Action},
+    {SystemSettingId::VfdPolling, "VFD", "VFD poll", SystemSettingType::Bool},
+    {SystemSettingId::Reboot, "SYS", "Reboot", SystemSettingType::Action}
+};
+
+constexpr uint8_t SYSTEM_SETTINGS_COUNT = sizeof(SYSTEM_SETTINGS) / sizeof(SYSTEM_SETTINGS[0]);
+
 TempSensorRole tempRoleFromIndex(uint8_t index) {
     switch (index % 4) {
         case 0:
@@ -402,6 +434,7 @@ void DisplayUi::nextPage() {
     const uint8_t next = (getPageIndex() + 1) % static_cast<uint8_t>(Page::Count);
     currentPage = static_cast<Page>(next);
     tempPageMode = TempPageMode::View;
+    systemPageMode = SystemPageMode::View;
     diagnosticsScrollMode = false;
     dirty = true;
     fullRedraw = true;
@@ -413,6 +446,7 @@ void DisplayUi::previousPage() {
     const uint8_t previous = (getPageIndex() + count - 1) % count;
     currentPage = static_cast<Page>(previous);
     tempPageMode = TempPageMode::View;
+    systemPageMode = SystemPageMode::View;
     diagnosticsScrollMode = false;
     dirty = true;
     fullRedraw = true;
@@ -427,6 +461,7 @@ void DisplayUi::setPage(Page page) {
     currentPage = page;
     interactionMode = InteractionMode::View;
     tempPageMode = TempPageMode::View;
+    systemPageMode = SystemPageMode::View;
     diagnosticsScrollMode = false;
     dirty = true;
     fullRedraw = true;
@@ -450,6 +485,7 @@ DisplayUi::Action DisplayUi::handleButton(Button button, bool longPress, DeviceS
         currentPage = Page::Overview;
         interactionMode = InteractionMode::View;
         tempPageMode = TempPageMode::View;
+        systemPageMode = SystemPageMode::View;
         diagnosticsScrollMode = false;
         dirty = true;
         fullRedraw = true;
@@ -464,6 +500,10 @@ DisplayUi::Action DisplayUi::handleButton(Button button, bool longPress, DeviceS
 
     if (currentPage == Page::Diagnostics) {
         return handleDiagnosticsButton(button, longPress, state);
+    }
+
+    if (currentPage == Page::SystemSettings) {
+        return handleSystemSettingsButton(button, longPress, state);
     }
 
     if (interactionMode == InteractionMode::View) {
@@ -485,6 +525,11 @@ DisplayUi::Action DisplayUi::handleButton(Button button, bool longPress, DeviceS
                     enterSelectMode(state);
                 } else if (currentPage == Page::Settings) {
                     enterAutoSettingsSelect();
+                } else if (currentPage == Page::SystemSettings) {
+                    systemPageMode = SystemPageMode::Select;
+                    dirty = true;
+                    fullRedraw = false;
+                    Logger::debug(TAG_UI, "CONFIG mode: SYSTEM SETTINGS");
                 } else {
                     Logger::debug(TAG_UI, "OK ignored: page has no editable parameters yet");
                 }
@@ -587,6 +632,9 @@ void DisplayUi::render(const DeviceState& state, const AutoControlSettings& auto
         case Page::Settings:
             drawSettings(state, autoSettings);
             break;
+        case Page::SystemSettings:
+            drawSystemSettings(state);
+            break;
         case Page::Diagnostics:
             drawDiagnostics(state);
             break;
@@ -622,14 +670,21 @@ void DisplayUi::drawHeader(const DeviceState& state, const char* title) {
         }
     }
 
-    if (shellRedraw || !headerStatusCached || state.wifiConnected != lastHeaderWifiConnected) {
+    const bool wifiEnabled = state.settings.wifiEnabled;
+    const bool haEnabled = state.settings.wifiEnabled && state.settings.mqttEnabled;
+    const uint16_t wifiColor = !wifiEnabled ? COLOR_MUTED : (state.wifiConnected ? COLOR_OK : COLOR_DANGER);
+    const uint16_t haColor = !haEnabled ? COLOR_MUTED : (state.homeAssistant.connected ? COLOR_OK : COLOR_DANGER);
+
+    if (shellRedraw || !headerStatusCached || state.wifiConnected != lastHeaderWifiConnected || wifiEnabled != lastHeaderWifiEnabled) {
         lastHeaderWifiConnected = state.wifiConnected;
-        drawWifiIcon(268, 10, state.wifiConnected ? COLOR_OK : COLOR_DANGER);
+        lastHeaderWifiEnabled = wifiEnabled;
+        drawWifiIcon(268, 10, wifiColor);
     }
 
-    if (shellRedraw || !headerStatusCached || state.homeAssistant.connected != lastHeaderHaConnected) {
+    if (shellRedraw || !headerStatusCached || state.homeAssistant.connected != lastHeaderHaConnected || haEnabled != lastHeaderHaEnabled) {
         lastHeaderHaConnected = state.homeAssistant.connected;
-        drawHomeAssistantIcon(304, 10, state.homeAssistant.connected ? COLOR_OK : COLOR_DANGER);
+        lastHeaderHaEnabled = haEnabled;
+        drawHomeAssistantIcon(304, 10, haColor);
     }
 
     headerStatusCached = true;
@@ -1326,6 +1381,137 @@ void DisplayUi::drawSettings(const DeviceState& state, const AutoControlSettings
     drawAutoSettingsList(autoSettings);
 }
 
+void DisplayUi::drawSystemSettings(const DeviceState& state) {
+    if (fullRedraw) {
+        tft.drawRoundRect(8, 28, 304, 182, 6, COLOR_ACCENT);
+        systemPageCacheValid = false;
+    }
+
+    if (selectedSystemSetting >= SYSTEM_SETTINGS_COUNT) {
+        selectedSystemSetting = SYSTEM_SETTINGS_COUNT - 1;
+    }
+
+    if (selectedSystemSetting < systemSettingsScroll) {
+        systemSettingsScroll = selectedSystemSetting;
+    } else if (selectedSystemSetting >= systemSettingsScroll + SYSTEM_VISIBLE_ROWS) {
+        systemSettingsScroll = selectedSystemSetting - SYSTEM_VISIBLE_ROWS + 1;
+    }
+
+    const bool selectable = systemPageMode != SystemPageMode::View;
+    const bool editMode = systemPageMode == SystemPageMode::Edit;
+    const bool rangeChanged = !systemPageCacheValid || lastSystemVisibleStart != systemSettingsScroll;
+    const bool selectionChanged = !systemPageCacheValid
+        || lastSystemSelectedIndex != selectedSystemSetting
+        || lastSystemPageMode != systemPageMode;
+
+    tft.setFreeFont(nullptr);
+    tft.setTextFont(2);
+    tft.setTextSize(1);
+
+    const SystemSettingDescriptor& selected = SYSTEM_SETTINGS[selectedSystemSetting];
+    if (!systemPageCacheValid || lastSystemPageMode != systemPageMode) {
+        tft.fillRect(14, 32, 292, 18, COLOR_BG);
+        tft.setTextColor(COLOR_TITLE, COLOR_BG);
+        tft.drawString(systemPageMode == SystemPageMode::View ? "SYSTEM SETTINGS" : selected.group, 18, 32);
+    }
+
+    for (uint8_t row = 0; row < SYSTEM_VISIBLE_ROWS; row++) {
+        const uint8_t index = systemSettingsScroll + row;
+        const int y = 54 + row * 22;
+        if (index >= SYSTEM_SETTINGS_COUNT) {
+            if (!systemPageCacheValid || lastSystemRowIndex[row] != 255) {
+                tft.fillRect(12, y - 4, 296, 22, COLOR_BG);
+                lastSystemRowIndex[row] = 255;
+                lastSystemRowValue[row] = "";
+                lastSystemRowSelected[row] = false;
+            }
+            continue;
+        }
+
+        const SystemSettingDescriptor& descriptor = SYSTEM_SETTINGS[index];
+        bool boolValue = false;
+        String value;
+        switch (descriptor.id) {
+            case SystemSettingId::Wifi:
+                boolValue = state.settings.wifiEnabled;
+                value = boolValue ? "ON" : "OFF";
+                break;
+            case SystemSettingId::HomeAssistant:
+                boolValue = state.settings.mqttEnabled;
+                value = boolValue ? "ON" : "OFF";
+                break;
+            case SystemSettingId::AutoSave:
+                boolValue = state.settings.autoSaveEnabled;
+                value = boolValue ? "ON" : "OFF";
+                break;
+            case SystemSettingId::VfdPolling:
+                boolValue = state.settings.vfdPollingEnabled;
+                value = boolValue ? "ON" : "OFF";
+                break;
+            case SystemSettingId::SaveNow:
+                value = "RUN";
+                break;
+            case SystemSettingId::Reboot:
+                value = systemPageMode == SystemPageMode::ConfirmReboot
+                    ? (systemRebootYes ? "YES" : "NO")
+                    : "RUN";
+                break;
+        }
+
+        if (editMode && index == selectedSystemSetting && descriptor.type == SystemSettingType::Bool) {
+            value = systemEditValue ? "ON" : "OFF";
+        }
+
+        const bool selectedRow = selectable && index == selectedSystemSetting;
+        const String rowCache = String(descriptor.group) + "|" + descriptor.label + "|" + value;
+        const bool rowChanged = rangeChanged
+            || selectionChanged
+            || !systemPageCacheValid
+            || lastSystemRowIndex[row] != index
+            || lastSystemRowValue[row] != rowCache
+            || lastSystemRowSelected[row] != selectedRow;
+        if (!rowChanged) {
+            continue;
+        }
+
+        lastSystemRowIndex[row] = index;
+        lastSystemRowValue[row] = rowCache;
+        lastSystemRowSelected[row] = selectedRow;
+
+        tft.fillRect(12, y - 5, 296, 24, COLOR_BG);
+        const uint16_t labelColor = selectedRow ? (editMode ? COLOR_TITLE : COLOR_TEXT) : COLOR_MUTED;
+        const uint16_t valueColor = descriptor.type == SystemSettingType::Action
+            ? COLOR_WARN
+            : ((editMode && selectedRow) ? COLOR_TITLE : (value == "ON" ? COLOR_OK : COLOR_MUTED));
+        tft.setTextColor(COLOR_ACCENT, COLOR_BG);
+        tft.drawString(descriptor.group, 18, y);
+        tft.setTextColor(labelColor, COLOR_BG);
+        tft.drawString(String(selectedRow ? "> " : "  ") + descriptor.label, 72, y);
+        tft.setTextColor(valueColor, COLOR_BG);
+        tft.drawRightString(value, 300, y, 2);
+        if (selectedRow) {
+            tft.drawFastHLine(18, y + 18, 282, editMode ? COLOR_TITLE : COLOR_TEXT);
+        }
+    }
+
+    String hint;
+    if (systemPageMode == SystemPageMode::View) {
+        hint = "OK: config  LEFT/RIGHT: page";
+    } else if (systemPageMode == SystemPageMode::Edit) {
+        hint = "LEFT/RIGHT: change  OK: save";
+    } else if (systemPageMode == SystemPageMode::ConfirmReboot) {
+        hint = "LEFT/RIGHT: choose  OK: reboot";
+    } else {
+        hint = "OK: edit/run  BACK: exit";
+    }
+    drawTextBox(39, 14, 202, 292, hint, COLOR_WARN, 1);
+
+    lastSystemVisibleStart = systemSettingsScroll;
+    lastSystemSelectedIndex = selectedSystemSetting;
+    lastSystemPageMode = systemPageMode;
+    systemPageCacheValid = true;
+}
+
 void DisplayUi::drawAutoSettingsList(const AutoControlSettings& autoSettings) {
     if (selectedAutoSetting >= AUTO_SETTINGS_COUNT) {
         selectedAutoSetting = AUTO_SETTINGS_COUNT - 1;
@@ -1685,6 +1871,8 @@ const char* DisplayUi::getPageName(Page page) const {
             return "Temp";
         case Page::Settings:
             return "Auto";
+        case Page::SystemSettings:
+            return "System";
         case Page::Diagnostics:
             return "Diag";
         case Page::Count:
@@ -2261,6 +2449,187 @@ DisplayUi::Action DisplayUi::applyAutoSettingsEdit(const AutoControlSettings& au
     }
 
     interactionMode = InteractionMode::Select;
+    dirty = true;
+    fullRedraw = false;
+    return action;
+}
+
+DisplayUi::Action DisplayUi::handleSystemSettingsButton(Button button, bool longPress, DeviceState& state) {
+    Action action;
+    if (longPress) {
+        return action;
+    }
+
+    if (selectedSystemSetting >= SYSTEM_SETTINGS_COUNT) {
+        selectedSystemSetting = 0;
+    }
+
+    if (systemPageMode == SystemPageMode::View) {
+        switch (button) {
+            case Button::Left:
+                previousPage();
+                Logger::debug(TAG_UI, "SYSTEM VIEW: page previous");
+                break;
+            case Button::Right:
+                nextPage();
+                Logger::debug(TAG_UI, "SYSTEM VIEW: page next");
+                break;
+            case Button::Ok:
+                systemPageMode = SystemPageMode::Select;
+                systemPageCacheValid = false;
+                dirty = true;
+                fullRedraw = false;
+                Logger::debug(TAG_UI, "SYSTEM CONFIG mode entered");
+                break;
+            case Button::Back:
+                currentPage = Page::Overview;
+                systemPageMode = SystemPageMode::View;
+                dirty = true;
+                fullRedraw = true;
+                shellRedraw = true;
+                break;
+        }
+        return action;
+    }
+
+    if (systemPageMode == SystemPageMode::Select) {
+        switch (button) {
+            case Button::Left:
+                selectedSystemSetting = selectedSystemSetting == 0 ? SYSTEM_SETTINGS_COUNT - 1 : selectedSystemSetting - 1;
+                dirty = true;
+                fullRedraw = false;
+                break;
+            case Button::Right:
+                selectedSystemSetting = (selectedSystemSetting + 1) % SYSTEM_SETTINGS_COUNT;
+                dirty = true;
+                fullRedraw = false;
+                break;
+            case Button::Ok: {
+                const SystemSettingDescriptor& descriptor = SYSTEM_SETTINGS[selectedSystemSetting];
+                if (descriptor.type == SystemSettingType::Bool) {
+                    switch (descriptor.id) {
+                        case SystemSettingId::Wifi:
+                            systemEditValue = state.settings.wifiEnabled;
+                            break;
+                        case SystemSettingId::HomeAssistant:
+                            systemEditValue = state.settings.mqttEnabled;
+                            break;
+                        case SystemSettingId::AutoSave:
+                            systemEditValue = state.settings.autoSaveEnabled;
+                            break;
+                        case SystemSettingId::VfdPolling:
+                            systemEditValue = state.settings.vfdPollingEnabled;
+                            break;
+                        case SystemSettingId::SaveNow:
+                        case SystemSettingId::Reboot:
+                            systemEditValue = false;
+                            break;
+                    }
+                    systemPageMode = SystemPageMode::Edit;
+                } else if (descriptor.id == SystemSettingId::SaveNow) {
+                    action.type = ActionType::SystemSaveNow;
+                } else if (descriptor.id == SystemSettingId::Reboot) {
+                    systemRebootYes = false;
+                    systemPageMode = SystemPageMode::ConfirmReboot;
+                    systemPageCacheValid = false;
+                }
+                dirty = true;
+                fullRedraw = false;
+                break;
+            }
+            case Button::Back:
+                systemPageMode = SystemPageMode::View;
+                systemPageCacheValid = false;
+                dirty = true;
+                fullRedraw = false;
+                break;
+        }
+        return action;
+    }
+
+    if (systemPageMode == SystemPageMode::Edit) {
+        switch (button) {
+            case Button::Left:
+            case Button::Right:
+                systemEditValue = !systemEditValue;
+                dirty = true;
+                fullRedraw = false;
+                break;
+            case Button::Ok:
+                return applySystemSettingsEdit(state);
+            case Button::Back:
+                systemPageMode = SystemPageMode::Select;
+                dirty = true;
+                fullRedraw = false;
+                break;
+        }
+        return action;
+    }
+
+    if (systemPageMode == SystemPageMode::ConfirmReboot) {
+        switch (button) {
+            case Button::Left:
+            case Button::Right:
+                systemRebootYes = !systemRebootYes;
+                dirty = true;
+                fullRedraw = false;
+                break;
+            case Button::Ok:
+                if (systemRebootYes) {
+                    action.type = ActionType::SystemReboot;
+                }
+                systemPageMode = SystemPageMode::Select;
+                systemPageCacheValid = false;
+                dirty = true;
+                fullRedraw = false;
+                break;
+            case Button::Back:
+                systemPageMode = SystemPageMode::Select;
+                systemPageCacheValid = false;
+                dirty = true;
+                fullRedraw = false;
+                break;
+        }
+    }
+
+    return action;
+}
+
+DisplayUi::Action DisplayUi::applySystemSettingsEdit(DeviceState& state) {
+    Action action;
+    if (selectedSystemSetting >= SYSTEM_SETTINGS_COUNT) {
+        return action;
+    }
+
+    const SystemSettingDescriptor& descriptor = SYSTEM_SETTINGS[selectedSystemSetting];
+    bool* target = nullptr;
+    switch (descriptor.id) {
+        case SystemSettingId::Wifi:
+            target = &state.settings.wifiEnabled;
+            break;
+        case SystemSettingId::HomeAssistant:
+            target = &state.settings.mqttEnabled;
+            break;
+        case SystemSettingId::AutoSave:
+            target = &state.settings.autoSaveEnabled;
+            break;
+        case SystemSettingId::VfdPolling:
+            target = &state.settings.vfdPollingEnabled;
+            break;
+        case SystemSettingId::SaveNow:
+        case SystemSettingId::Reboot:
+            break;
+    }
+
+    if (target != nullptr && *target != systemEditValue) {
+        *target = systemEditValue;
+        action.type = ActionType::SystemSettings;
+        action.settingsChanged = true;
+        action.uintValue = static_cast<uint8_t>(descriptor.id);
+        Logger::infof(TAG_UI, "System setting applied: %s=%u", descriptor.label, systemEditValue ? 1 : 0);
+    }
+
+    systemPageMode = SystemPageMode::Select;
     dirty = true;
     fullRedraw = false;
     return action;

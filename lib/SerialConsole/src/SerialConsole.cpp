@@ -766,8 +766,13 @@ void SerialConsole::processDisplayCommand(const String& cmd) {
             println("[DISPLAY] Controller action layer is not available");
             return;
         }
-    } else if (args == "settings" || args == "net" || args == "network") {
+    } else if (args == "settings" || args == "auto") {
         if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::Settings)) {
+            println("[DISPLAY] Controller action layer is not available");
+            return;
+        }
+    } else if (args == "system" || args == "net" || args == "network") {
+        if (controller == nullptr || !controller->displaySetPage(DisplayUi::Page::SystemSettings)) {
             println("[DISPLAY] Controller action layer is not available");
             return;
         }
@@ -1423,6 +1428,7 @@ void SerialConsole::printDisplayHelp() {
     println("display ventilation");
     println("display temp");
     println("display settings");
+    println("display system");
     println("display diagnostics");
     println("------------------------");
     println();

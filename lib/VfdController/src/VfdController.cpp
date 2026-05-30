@@ -1,28 +1,39 @@
 // VfdController.cpp
 #include "VfdController.h"
 
-#include <cstring>
-
 #include "Logger.h"
 
 namespace {
 constexpr const char* TAG_VFD = "VFD";
+constexpr uint16_t REG_COMMAND_WORD = 0x2000;
 constexpr uint16_t REG_COMMAND_FREQUENCY = 0x2001;
 constexpr uint16_t REG_STATUS_WORD = 0x2100;
 constexpr uint16_t REG_OPERATION_FREQUENCY = 0x3000;
 constexpr unsigned long ONLINE_TIMEOUT_MS = 10000;
 
-bool isCrcNoise(Error error) {
-    return error == CRC_ERROR || error == ASCII_CRC_ERR;
+constexpr uint8_t ERR_TIMEOUT = 0xE0;
+constexpr uint8_t ERR_PACKET = 0xE1;
+constexpr uint8_t ERR_CRC = 0xE2;
+constexpr uint8_t ERR_EXCEPTION = 0xE3;
+constexpr uint8_t ERR_OVERFLOW = 0xE4;
+constexpr uint8_t ERR_MALFORMED = 0xE5;
+
+const char* errorName(uint8_t code) {
+    switch (code) {
+        case ERR_TIMEOUT: return "timeout";
+        case ERR_PACKET: return "packet";
+        case ERR_CRC: return "crc";
+        case ERR_EXCEPTION: return "exception";
+        case ERR_OVERFLOW: return "overflow";
+        case ERR_MALFORMED: return "malformed";
+        default: return "error";
+    }
 }
 }
-
-
-VfdController* VfdController::activeInstance = nullptr;
 
 
 VfdController::VfdController(uint8_t deRePin)
-    : client(deRePin) {
+    : deRePin(deRePin) {
 }
 
 
@@ -33,51 +44,47 @@ void VfdController::begin(
     uint32_t baudRate,
     uint32_t serialConfig
 ) {
-    activeInstance = this;
+    bus = &serial;
+    bus->begin(baudRate, serialConfig, rxPin, txPin);
+    bus->setTimeout(0);
 
-    RTUutils::prepareHardwareSerial(serial);
-    serial.begin(baudRate, serialConfig, rxPin, txPin);
+    pinMode(deRePin, OUTPUT);
+    digitalWrite(deRePin, LOW);
 
-    client.onDataHandler(&VfdController::handleData);
-    client.onErrorHandler(&VfdController::handleError);
-
-    client.begin(serial);
     initialized = true;
     activitySeen = false;
+    rtuState = RtuState::Idle;
     lastAction = "initialized";
 
-    Logger::info(TAG_VFD, "Controller initialized");
+    Logger::info(TAG_VFD, "Controller initialized with native RTU master");
 }
 
 
 bool VfdController::forward() {
-    commandedRunning = true;
-    return enqueueWrite(0x2000, 0x0001, "forward");
+    return enqueueWrite(REG_COMMAND_WORD, 0x0001, "forward");
 }
 
 
 bool VfdController::reverse() {
-    commandedRunning = true;
-    return enqueueWrite(0x2000, 0x0002, "reverse");
+    return enqueueWrite(REG_COMMAND_WORD, 0x0002, "reverse");
 }
 
 
 bool VfdController::stop() {
-    commandedRunning = false;
-    return enqueueWrite(0x2000, 0x0005, "stop");
+    return enqueueWrite(REG_COMMAND_WORD, 0x0005, "stop");
 }
 
 
 bool VfdController::setFrequency(float hz) {
-    if (hz < 0.0f) {
-        hz = 0.0f;
+    if (hz < 20.0f) {
+        hz = 20.0f;
     }
 
     if (hz > 50.0f) {
         hz = 50.0f;
     }
 
-    uint16_t value = (uint16_t)lroundf(hz * 100.0f);
+    const uint16_t value = (uint16_t)lroundf(hz * 100.0f);
     requestedFrequencySet = true;
     requestedFrequencyHz = hz;
     return enqueueWrite(REG_COMMAND_FREQUENCY, value, "set frequency");
@@ -85,31 +92,35 @@ bool VfdController::setFrequency(float hz) {
 
 
 void VfdController::update() {
-    if (!initialized) {
+    if (!initialized || bus == nullptr) {
         return;
     }
 
     const unsigned long now = millis();
-    if (requestInFlight) {
-        if (now - requestStartedMs > REQUEST_TIMEOUT_GUARD_MS) {
-            Logger::warningf(
-                TAG_VFD,
-                "Request timeout guard token=%lu age=%lu ms action=%s",
-                (unsigned long)inFlightToken,
-                (unsigned long)(now - requestStartedMs),
-                lastAction
-            );
-            recordError(TIMEOUT, inFlightToken, true, "error");
-            completeRequest(true);
+    if (rtuState == RtuState::WaitingResponse) {
+        readAvailableResponseBytes();
+        if (responseComplete()) {
+            handleResponse();
+            return;
         }
+
+        if (now - requestStartedMs >= RESPONSE_TIMEOUT_MS) {
+            handleTimeout();
+            return;
+        }
+
         return;
     }
 
-    if (requestFinishedMs > 0) {
-        const unsigned long cooldownMs = lastRequestHadError ? REQUEST_ERROR_COOLDOWN_MS : REQUEST_COOLDOWN_MS;
-        if (now - requestFinishedMs < cooldownMs) {
+    if (rtuState == RtuState::Cooldown) {
+        if (now - requestFinishedMs < interRequestDelayMs()) {
             return;
         }
+        rtuState = RtuState::Idle;
+    }
+
+    if (rtuState != RtuState::Idle) {
+        return;
     }
 
     VfdOperation operation;
@@ -117,17 +128,12 @@ void VfdController::update() {
         return;
     }
 
-    sendOperation(operation);
+    startTransaction(operation);
 }
 
 
 void VfdController::pollStatus() {
-    if (!initialized) {
-        return;
-    }
-
-    if (requestInFlight || hasQueuedOperation()) {
-        Logger::tracef(TAG_VFD, "Status poll skipped: pending request token=%lu queued=%u", (unsigned long)inFlightToken, opCount);
+    if (!initialized || rtuState != RtuState::Idle || hasQueuedOperation()) {
         return;
     }
 
@@ -140,12 +146,11 @@ void VfdController::pollStatus() {
     pollFrequencyNext = !pollFrequencyNext;
 }
 
-void VfdController::suppressPolling(unsigned long durationMs) {
-    pollingSuppressedUntilMs = millis() + durationMs;
-}
-
 
 bool VfdController::readRegister(uint16_t address, uint16_t count) {
+    if (count == 0 || count > MAX_REG_COUNT) {
+        return false;
+    }
     return enqueueRead(address, count, "read register");
 }
 
@@ -239,6 +244,7 @@ uint32_t VfdController::getErrorCount() const {
     return errorCount;
 }
 
+
 uint8_t VfdController::getConsecutiveErrorCount() const {
     return consecutiveErrorCount;
 }
@@ -251,6 +257,29 @@ uint32_t VfdController::getLastToken() const {
 
 uint8_t VfdController::getLastErrorCode() const {
     return lastErrorCode;
+}
+
+
+bool VfdController::hasRecentWriteAck(uint16_t address, uint16_t value, unsigned long sinceMs) const {
+    return lastWriteAckOk
+        && lastWriteAckAddress == address
+        && lastWriteAckValue == value
+        && lastWriteAckMs >= sinceMs;
+}
+
+
+unsigned long VfdController::getLastWriteAckMs() const {
+    return lastWriteAckMs;
+}
+
+
+uint16_t VfdController::getLastWriteAckAddress() const {
+    return lastWriteAckAddress;
+}
+
+
+uint16_t VfdController::getLastWriteAckValue() const {
+    return lastWriteAckValue;
 }
 
 
@@ -269,11 +298,7 @@ unsigned long VfdController::getLastActivityAgeMs() const {
 
 
 bool VfdController::isBusy() const {
-    return requestInFlight;
-}
-
-bool VfdController::isPollingSuppressed() const {
-    return (int32_t)(pollingSuppressedUntilMs - millis()) > 0;
+    return rtuState == RtuState::WaitingResponse || opCount > 0;
 }
 
 
@@ -295,28 +320,33 @@ uint8_t VfdController::frequencyToStep(float hz) const {
 }
 
 
+uint16_t VfdController::crc16Modbus(const uint8_t* data, size_t len) const {
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (uint8_t bit = 0; bit < 8; bit++) {
+            if (crc & 0x0001) {
+                crc = (crc >> 1) ^ 0xA001;
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    return crc;
+}
+
+
 bool VfdController::enqueueRead(uint16_t address, uint16_t count, const char* action) {
+    if (count == 0 || count > MAX_REG_COUNT) {
+        return false;
+    }
+
     VfdOperation operation;
     operation.type = VfdOpType::ReadHolding;
     operation.address = address;
     operation.valueOrCount = count;
     operation.action = action;
-
-    if (isDuplicateQueued(operation)) {
-        Logger::tracef(TAG_VFD, "Read request already queued action=%s address=0x%04X count=%u", action, address, count);
-        return true;
-    }
-
-    if (opCount >= OP_QUEUE_SIZE) {
-        Logger::errorf(TAG_VFD, "Request queue full action=%s address=0x%04X", action, address);
-        return false;
-    }
-
-    opQueue[opTail] = operation;
-    opTail = (opTail + 1) % OP_QUEUE_SIZE;
-    opCount++;
-    Logger::tracef(TAG_VFD, "Enqueued read action=%s address=0x%04X count=%u queued=%u", action, address, count, opCount);
-    return true;
+    return enqueueOperation(operation);
 }
 
 
@@ -326,21 +356,23 @@ bool VfdController::enqueueWrite(uint16_t address, uint16_t value, const char* a
     operation.address = address;
     operation.valueOrCount = value;
     operation.action = action;
+    return enqueueOperation(operation);
+}
 
+
+bool VfdController::enqueueOperation(const VfdOperation& operation) {
     if (isDuplicateQueued(operation)) {
-        Logger::tracef(TAG_VFD, "Write request already queued action=%s address=0x%04X value=0x%04X", action, address, value);
         return true;
     }
 
     if (opCount >= OP_QUEUE_SIZE) {
-        Logger::errorf(TAG_VFD, "Request queue full action=%s address=0x%04X", action, address);
+        Logger::errorf(TAG_VFD, "Request queue full action=%s address=0x%04X", operation.action, operation.address);
         return false;
     }
 
     opQueue[opTail] = operation;
     opTail = (opTail + 1) % OP_QUEUE_SIZE;
     opCount++;
-    Logger::tracef(TAG_VFD, "Enqueued write action=%s address=0x%04X value=0x%04X queued=%u", action, address, value, opCount);
     return true;
 }
 
@@ -364,7 +396,7 @@ bool VfdController::hasQueuedOperation() const {
 
 
 bool VfdController::isDuplicateQueued(const VfdOperation& operation) const {
-    if (requestInFlight
+    if (rtuState == RtuState::WaitingResponse
         && activeOperation.type == operation.type
         && activeOperation.address == operation.address
         && activeOperation.valueOrCount == operation.valueOrCount) {
@@ -385,186 +417,290 @@ bool VfdController::isDuplicateQueued(const VfdOperation& operation) const {
 }
 
 
-void VfdController::sendOperation(const VfdOperation& operation) {
-    const uint32_t token = nextToken();
-    Error error = SUCCESS;
-
-    if (operation.type == VfdOpType::ReadHolding) {
-        error = client.addRequest(token, 1, READ_HOLD_REGISTER, operation.address, operation.valueOrCount);
-    } else if (operation.type == VfdOpType::WriteSingle) {
-        error = client.addRequest(token, 1, WRITE_HOLD_REGISTER, operation.address, operation.valueOrCount);
-    } else {
-        return;
+bool VfdController::startTransaction(const VfdOperation& operation) {
+    if (bus == nullptr) {
+        return false;
     }
 
-    lastAction = operation.action;
-    lastToken = token;
-
-    if (error != SUCCESS) {
-        recordError(error, token, true, "error");
-        requestFinishedMs = millis();
-        lastRequestHadError = true;
-        return;
+    while (bus->available()) {
+        bus->read();
     }
 
-    requestInFlight = true;
+    txLen = 0;
+    rxLen = 0;
+    expectedResponseLen = 0;
     activeOperation = operation;
-    inFlightToken = token;
+    expectedFunction = operation.type == VfdOpType::ReadHolding ? READ_HOLDING : WRITE_SINGLE;
+    inFlightToken = nextToken();
+    lastToken = inFlightToken;
+    lastAction = operation.action;
     requestStartedMs = millis();
+
+    txBuffer[txLen++] = SLAVE_ID;
+    txBuffer[txLen++] = expectedFunction;
+    txBuffer[txLen++] = (uint8_t)(operation.address >> 8);
+    txBuffer[txLen++] = (uint8_t)(operation.address & 0xFF);
+    txBuffer[txLen++] = (uint8_t)(operation.valueOrCount >> 8);
+    txBuffer[txLen++] = (uint8_t)(operation.valueOrCount & 0xFF);
+    const uint16_t crc = crc16Modbus(txBuffer, txLen);
+    txBuffer[txLen++] = (uint8_t)(crc & 0xFF);
+    txBuffer[txLen++] = (uint8_t)(crc >> 8);
+
+    digitalWrite(deRePin, HIGH);
+    delayMicroseconds(100);
+    bus->write(txBuffer, txLen);
+    bus->flush();
+    delayMicroseconds(200);
+    digitalWrite(deRePin, LOW);
+
     requestCount++;
-
-    if (operation.type == VfdOpType::ReadHolding && operation.address == REG_STATUS_WORD) {
-        statusWordToken = token;
-    } else if (operation.type == VfdOpType::ReadHolding && operation.address == REG_OPERATION_FREQUENCY) {
-        monitorFrequencyToken = token;
-    }
-
-    Logger::tracef(
+    rtuState = RtuState::WaitingResponse;
+    Logger::debugf(
         TAG_VFD,
-        "TX token=%lu action=%s type=%u address=0x%04X value=0x%04X queued=%u",
-        (unsigned long)token,
-        operation.action,
-        (unsigned)operation.type,
+        "TX token=%lu fc=%02X addr=0x%04X value=0x%04X action=%s",
+        (unsigned long)inFlightToken,
+        expectedFunction,
         operation.address,
         operation.valueOrCount,
-        opCount
+        operation.action
     );
+    return true;
 }
 
 
-void VfdController::completeRequest(bool hadError) {
-    requestInFlight = false;
-    activeOperation = VfdOperation();
-    inFlightToken = 0;
+void VfdController::finishTransaction(bool hadError) {
     requestFinishedMs = millis();
     lastRequestHadError = hadError;
+    activeOperation = VfdOperation();
+    inFlightToken = 0;
+    expectedResponseLen = 0;
+    rtuState = RtuState::Cooldown;
 }
 
 
-void VfdController::recordError(Error error, uint32_t token, bool countAsTotalError, const char* level) {
-    ModbusError modbusError(error);
-    if (countAsTotalError) {
-        errorCount++;
+unsigned long VfdController::interRequestDelayMs() const {
+    return lastRequestHadError ? INTER_REQUEST_ERROR_DELAY_MS : INTER_REQUEST_DELAY_MS;
+}
+
+
+void VfdController::readAvailableResponseBytes() {
+    while (bus != nullptr && bus->available()) {
+        if (rxLen >= sizeof(rxBuffer)) {
+            recordTransactionError(ERR_OVERFLOW, "rx overflow");
+            finishTransaction(true);
+            return;
+        }
+        rxBuffer[rxLen++] = (uint8_t)bus->read();
     }
-    if (isCrcNoise(error)) {
+}
+
+
+bool VfdController::updateExpectedResponseLength() {
+    if (rxLen < 2) {
+        return false;
+    }
+
+    if (rxBuffer[1] == (expectedFunction | 0x80)) {
+        expectedResponseLen = 5;
+        return true;
+    }
+
+    if (rxBuffer[1] != expectedFunction) {
+        expectedResponseLen = rxLen >= 5 ? rxLen : 0;
+        return expectedResponseLen > 0;
+    }
+
+    if (expectedFunction == READ_HOLDING) {
+        if (rxLen < 3) {
+            return false;
+        }
+        const uint8_t byteCount = rxBuffer[2];
+        expectedResponseLen = 3 + byteCount + 2;
+        if (expectedResponseLen > sizeof(rxBuffer)) {
+            expectedResponseLen = sizeof(rxBuffer);
+        }
+        return true;
+    }
+
+    if (expectedFunction == WRITE_SINGLE) {
+        expectedResponseLen = 8;
+        return true;
+    }
+
+    return false;
+}
+
+
+bool VfdController::responseComplete() {
+    if (!updateExpectedResponseLength()) {
+        return false;
+    }
+
+    return expectedResponseLen > 0 && rxLen >= expectedResponseLen;
+}
+
+
+void VfdController::handleResponse() {
+    activitySeen = true;
+    lastActivityMs = millis();
+
+    if (expectedResponseLen < 5 || rxLen < expectedResponseLen) {
+        recordTransactionError(ERR_MALFORMED, "short response");
+        finishTransaction(true);
+        return;
+    }
+
+    if (rxBuffer[0] != SLAVE_ID) {
+        recordTransactionError(ERR_PACKET, "wrong slave");
+        finishTransaction(true);
+        return;
+    }
+
+    const uint16_t receivedCrc = (uint16_t)rxBuffer[expectedResponseLen - 2] | ((uint16_t)rxBuffer[expectedResponseLen - 1] << 8);
+    const uint16_t calculatedCrc = crc16Modbus(rxBuffer, expectedResponseLen - 2);
+    if (receivedCrc != calculatedCrc) {
+        recordTransactionError(ERR_CRC, "crc");
+        finishTransaction(true);
+        return;
+    }
+
+    if (rxBuffer[1] == (expectedFunction | 0x80)) {
+        recordTransactionError(ERR_EXCEPTION, "exception");
+        finishTransaction(true);
+        return;
+    }
+
+    if (rxBuffer[1] != expectedFunction) {
+        recordTransactionError(ERR_PACKET, "wrong function");
+        finishTransaction(true);
+        return;
+    }
+
+    if (expectedFunction == READ_HOLDING) {
+        const uint8_t byteCount = rxBuffer[2];
+        if (byteCount != activeOperation.valueOrCount * 2) {
+            recordTransactionError(ERR_MALFORMED, "byte count");
+            finishTransaction(true);
+            return;
+        }
+        parseReadResponse();
+    } else if (expectedFunction == WRITE_SINGLE) {
+        const uint16_t echoAddress = ((uint16_t)rxBuffer[2] << 8) | rxBuffer[3];
+        const uint16_t echoValue = ((uint16_t)rxBuffer[4] << 8) | rxBuffer[5];
+        if (echoAddress != activeOperation.address || echoValue != activeOperation.valueOrCount) {
+            recordTransactionError(ERR_PACKET, "write echo");
+            finishTransaction(true);
+            return;
+        }
+        parseWriteResponse();
+    }
+
+    okCount++;
+    everOnline = true;
+    communicationError = false;
+    consecutiveErrorCount = 0;
+    lastOkMs = millis();
+    Logger::debugf(
+        TAG_VFD,
+        "RX OK token=%lu fc=%02X len=%u",
+        (unsigned long)lastToken,
+        expectedFunction,
+        (unsigned)expectedResponseLen
+    );
+    finishTransaction(false);
+}
+
+
+void VfdController::handleTimeout() {
+    recordTransactionError(ERR_TIMEOUT, "timeout");
+    finishTransaction(true);
+}
+
+
+void VfdController::recordTransactionError(uint8_t code, const char* reason) {
+    errorCount++;
+    if (code == ERR_CRC) {
         crcErrorCount++;
     }
     if (consecutiveErrorCount < 255) {
         consecutiveErrorCount++;
     }
 
-    lastToken = token;
-    lastErrorCode = (uint8_t)error;
+    lastErrorCode = code;
     activitySeen = true;
     lastActivityMs = millis();
-    if (consecutiveErrorCount >= LINK_ERROR_THRESHOLD || (lastOkMs > 0 && millis() - lastOkMs > ONLINE_TIMEOUT_MS)) {
+    if (consecutiveErrorCount >= LINK_ERROR_THRESHOLD || (everOnline && millis() - lastOkMs > ONLINE_TIMEOUT_MS)) {
         communicationError = true;
     }
 
-    if (strcmp(level, "trace") == 0) {
-        Logger::tracef(
-            TAG_VFD,
-            "ERR token=%lu code=%02X (%s)",
-            (unsigned long)token,
-            (uint8_t)error,
-            (const char*)modbusError
-        );
+    if (code == ERR_TIMEOUT) {
+        Logger::errorf(TAG_VFD, "RX ERR token=%lu code=%02X reason=%s len=%u", (unsigned long)lastToken, code, reason, (unsigned)rxLen);
     } else {
-        Logger::errorf(
-            TAG_VFD,
-            "ERR token=%lu code=%02X (%s)",
-            (unsigned long)token,
-            (uint8_t)error,
-            (const char*)modbusError
-        );
+        logRawRx(code, reason);
     }
 }
 
 
-void VfdController::onData(ModbusMessage msg, uint32_t token) {
-    if (!requestInFlight || token != inFlightToken) {
-        Logger::tracef(TAG_VFD, "Stale RX ignored token=%lu active=%lu", (unsigned long)token, (unsigned long)inFlightToken);
-        return;
+void VfdController::logRawRx(uint8_t code, const char* reason) {
+    char raw[160] = {};
+    size_t offset = 0;
+    const size_t len = rxLen < sizeof(rxBuffer) ? rxLen : sizeof(rxBuffer);
+    for (size_t i = 0; i < len && offset + 4 < sizeof(raw); i++) {
+        offset += snprintf(raw + offset, sizeof(raw) - offset, "%02X ", rxBuffer[i]);
     }
 
-    completeRequest(false);
-    okCount++;
-    lastToken = token;
-    activitySeen = true;
-    everOnline = true;
-    communicationError = false;
-    consecutiveErrorCount = 0;
-    lastActivityMs = millis();
-    lastOkMs = lastActivityMs;
+    Logger::warningf(
+        TAG_VFD,
+        "RX ERR token=%lu code=%02X reason=%s len=%u raw=%s",
+        (unsigned long)lastToken,
+        code,
+        reason,
+        (unsigned)rxLen,
+        raw
+    );
+}
 
-    if (token == statusWordToken && msg.size() >= 5 && msg.getFunctionCode() == READ_HOLD_REGISTER) {
-        statusWord = ((uint16_t)msg[3] << 8) | msg[4];
+
+void VfdController::parseReadResponse() {
+    const uint16_t firstRegister = ((uint16_t)rxBuffer[3] << 8) | rxBuffer[4];
+
+    if (activeOperation.address == REG_STATUS_WORD && activeOperation.valueOrCount >= 1) {
+        statusWord = firstRegister;
         statusWordSet = true;
         running = statusWord == 0x0001 || statusWord == 0x0002;
         Logger::tracef(TAG_VFD, "Status word 0x%04X running=%u", statusWord, running ? 1 : 0);
-    }
-
-    if (token == monitorFrequencyToken && msg.size() >= 7 && msg.getFunctionCode() == READ_HOLD_REGISTER) {
-        const uint16_t rawFrequency = ((uint16_t)msg[3] << 8) | msg[4];
-        const uint16_t rawSettingFrequency = ((uint16_t)msg[5] << 8) | msg[6];
-        actualFrequencyHz = rawFrequency / 100.0f;
-        actualFrequencySet = true;
-        actualStep = frequencyToStep(actualFrequencyHz);
-        requestedFrequencySet = true;
-        requestedFrequencyHz = rawSettingFrequency / 100.0f;
-        Logger::tracef(
-            TAG_VFD,
-            "Monitor output %.2f Hz step %u setting %.2f Hz",
-            actualFrequencyHz,
-            actualStep,
-            requestedFrequencyHz
-        );
-    }
-
-    Logger::tracef(
-        TAG_VFD,
-        "OK token=%lu server=%u FC=%u len=%u",
-        (unsigned long)token,
-        msg.getServerID(),
-        msg.getFunctionCode(),
-        (unsigned)msg.size()
-    );
-
-    char data[160] = {};
-    size_t offset = 0;
-
-    for (auto& byteValue : msg) {
-        if (offset + 4 >= sizeof(data)) {
-            break;
-        }
-
-        offset += snprintf(data + offset, sizeof(data) - offset, "%02X ", byteValue);
-    }
-
-    Logger::tracef(TAG_VFD, "Data: %s", data);
-}
-
-
-void VfdController::onError(Error error, uint32_t token) {
-    if (!requestInFlight || token != inFlightToken) {
-        Logger::tracef(TAG_VFD, "Stale error ignored token=%lu active=%lu", (unsigned long)token, (unsigned long)inFlightToken);
         return;
     }
 
-    completeRequest(true);
-    recordError(error, token, !isCrcNoise(error), isCrcNoise(error) ? "trace" : "error");
-}
-
-
-void VfdController::handleData(ModbusMessage msg, uint32_t token) {
-    if (activeInstance != nullptr) {
-        activeInstance->onData(msg, token);
+    if (activeOperation.address == REG_OPERATION_FREQUENCY && activeOperation.valueOrCount >= 1) {
+        actualFrequencyHz = firstRegister / 100.0f;
+        actualFrequencySet = true;
+        actualStep = frequencyToStep(actualFrequencyHz);
+        if (activeOperation.valueOrCount >= 2) {
+            const uint16_t settingRegister = ((uint16_t)rxBuffer[5] << 8) | rxBuffer[6];
+            requestedFrequencySet = true;
+            requestedFrequencyHz = settingRegister / 100.0f;
+        }
+        Logger::tracef(TAG_VFD, "Monitor output %.2f Hz step %u setting %.2f Hz", actualFrequencyHz, actualStep, requestedFrequencyHz);
+        return;
     }
+
+    Logger::infof(TAG_VFD, "Read 0x%04X count=%u first=0x%04X", activeOperation.address, activeOperation.valueOrCount, firstRegister);
 }
 
 
-void VfdController::handleError(Error error, uint32_t token) {
-    if (activeInstance != nullptr) {
-        activeInstance->onError(error, token);
+void VfdController::parseWriteResponse() {
+    const uint16_t address = ((uint16_t)rxBuffer[2] << 8) | rxBuffer[3];
+    const uint16_t value = ((uint16_t)rxBuffer[4] << 8) | rxBuffer[5];
+    lastWriteAckOk = true;
+    lastWriteAckToken = lastToken;
+    lastWriteAckAddress = address;
+    lastWriteAckValue = value;
+    lastWriteAckMs = millis();
+    if (address == REG_COMMAND_WORD) {
+        commandedRunning = value == 0x0001 || value == 0x0002;
+    } else if (address == REG_COMMAND_FREQUENCY) {
+        requestedFrequencySet = true;
+        requestedFrequencyHz = value / 100.0f;
     }
 }

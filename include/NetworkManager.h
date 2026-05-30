@@ -13,9 +13,11 @@ public:
         const char* otaPassword
     );
 
-    void begin();
+    void begin(bool enabled = true);
     void update();
+    void setEnabled(bool enabled);
 
+    bool isEnabled() const;
     bool isConnected() const;
     IPAddress getIp() const;
 
@@ -25,6 +27,8 @@ private:
     const char* hostname;
     const char* otaPassword;
 
+    bool enabled = true;
+    bool otaStarted = false;
     unsigned long lastReconnectAttemptMs = 0;
     static constexpr unsigned long RECONNECT_INTERVAL_MS = 10000;
 

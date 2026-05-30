@@ -2,7 +2,6 @@
 #pragma once
 
 #include <Arduino.h>
-#include <ModbusClientRTU.h>
 
 class VfdController {
 public:
@@ -23,7 +22,6 @@ public:
     bool setFrequency(float hz);
     void update();
     void pollStatus();
-    void suppressPolling(unsigned long durationMs = 5000);
 
     bool readRegister(uint16_t address, uint16_t count);
     bool writeRegister(uint16_t address, uint16_t value);
@@ -48,17 +46,32 @@ public:
     uint8_t getConsecutiveErrorCount() const;
     uint32_t getLastToken() const;
     uint8_t getLastErrorCode() const;
+    bool hasRecentWriteAck(uint16_t address, uint16_t value, unsigned long sinceMs) const;
+    unsigned long getLastWriteAckMs() const;
+    uint16_t getLastWriteAckAddress() const;
+    uint16_t getLastWriteAckValue() const;
     bool hasActivity() const;
     unsigned long getLastActivityAgeMs() const;
     bool isBusy() const;
-    bool isPollingSuppressed() const;
 
 private:
-    static constexpr unsigned long REQUEST_TIMEOUT_GUARD_MS = 3000;
-    static constexpr unsigned long REQUEST_COOLDOWN_MS = 100;
-    static constexpr unsigned long REQUEST_ERROR_COOLDOWN_MS = 1500;
+    static constexpr uint8_t SLAVE_ID = 1;
+    static constexpr uint8_t READ_HOLDING = 0x03;
+    static constexpr uint8_t WRITE_SINGLE = 0x06;
+    static constexpr uint8_t MAX_REG_COUNT = 16;
+    static constexpr size_t TX_BUFFER_SIZE = 8;
+    static constexpr size_t RX_BUFFER_SIZE = 64;
     static constexpr uint8_t OP_QUEUE_SIZE = 8;
-    static constexpr uint8_t LINK_ERROR_THRESHOLD = 5;
+    static constexpr unsigned long RESPONSE_TIMEOUT_MS = 250;
+    static constexpr unsigned long INTER_REQUEST_DELAY_MS = 150;
+    static constexpr unsigned long INTER_REQUEST_ERROR_DELAY_MS = 500;
+    static constexpr uint8_t LINK_ERROR_THRESHOLD = 3;
+
+    enum class RtuState : uint8_t {
+        Idle,
+        WaitingResponse,
+        Cooldown
+    };
 
     enum class VfdOpType : uint8_t {
         None,
@@ -73,8 +86,26 @@ private:
         const char* action = "none";
     };
 
-    ModbusClientRTU client;
+    HardwareSerial* bus = nullptr;
+    uint8_t deRePin = 18;
+    RtuState rtuState = RtuState::Idle;
+    VfdOperation activeOperation;
+    VfdOperation opQueue[OP_QUEUE_SIZE];
+    uint8_t opHead = 0;
+    uint8_t opTail = 0;
+    uint8_t opCount = 0;
+    uint8_t txBuffer[TX_BUFFER_SIZE] = {};
+    uint8_t rxBuffer[RX_BUFFER_SIZE] = {};
+    size_t txLen = 0;
+    size_t rxLen = 0;
+    size_t expectedResponseLen = 0;
+    uint8_t expectedFunction = 0;
     uint32_t tokenCounter = 1;
+    uint32_t inFlightToken = 0;
+    unsigned long requestStartedMs = 0;
+    unsigned long requestFinishedMs = 0;
+    bool lastRequestHadError = false;
+
     bool initialized = false;
     const char* lastAction = "none";
     bool requestedFrequencySet = false;
@@ -93,43 +124,39 @@ private:
     uint8_t consecutiveErrorCount = 0;
     uint32_t lastToken = 0;
     uint8_t lastErrorCode = 0;
+    uint32_t lastWriteAckToken = 0;
+    uint16_t lastWriteAckAddress = 0;
+    uint16_t lastWriteAckValue = 0;
+    unsigned long lastWriteAckMs = 0;
+    bool lastWriteAckOk = false;
     bool activitySeen = false;
     bool everOnline = false;
     bool communicationError = false;
     unsigned long lastActivityMs = 0;
     unsigned long lastOkMs = 0;
-    uint32_t statusWordToken = 0;
-    uint32_t monitorFrequencyToken = 0;
     bool pollFrequencyNext = false;
-    bool requestInFlight = false;
-    bool lastRequestHadError = false;
-    VfdOperation activeOperation;
-    uint32_t inFlightToken = 0;
-    unsigned long requestStartedMs = 0;
-    unsigned long requestFinishedMs = 0;
-    unsigned long pollingSuppressedUntilMs = 0;
-    VfdOperation opQueue[OP_QUEUE_SIZE];
-    uint8_t opHead = 0;
-    uint8_t opTail = 0;
-    uint8_t opCount = 0;
 
     uint32_t nextToken();
     uint8_t frequencyToStep(float hz) const;
+    uint16_t crc16Modbus(const uint8_t* data, size_t len) const;
 
     bool enqueueRead(uint16_t address, uint16_t count, const char* action);
     bool enqueueWrite(uint16_t address, uint16_t value, const char* action);
+    bool enqueueOperation(const VfdOperation& operation);
     bool dequeueOperation(VfdOperation& operation);
     bool hasQueuedOperation() const;
     bool isDuplicateQueued(const VfdOperation& operation) const;
-    void sendOperation(const VfdOperation& operation);
-    void completeRequest(bool hadError);
-    void recordError(Error error, uint32_t token, bool countAsTotalError, const char* level);
+    bool startTransaction(const VfdOperation& operation);
+    void finishTransaction(bool hadError);
+    unsigned long interRequestDelayMs() const;
 
-    void onData(ModbusMessage msg, uint32_t token);
-    void onError(Error error, uint32_t token);
-
-    static VfdController* activeInstance;
-
-    static void handleData(ModbusMessage msg, uint32_t token);
-    static void handleError(Error error, uint32_t token);
+    void readAvailableResponseBytes();
+    bool updateExpectedResponseLength();
+    bool responseComplete();
+    void handleResponse();
+    void handleTimeout();
+    void recordTransactionError(uint8_t code, const char* reason);
+    void logRawRx(uint8_t code, const char* reason);
+    void parseReadResponse();
+    void parseWriteResponse();
 };

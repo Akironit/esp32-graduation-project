@@ -197,6 +197,10 @@ void Logger::write(LogLevel level, const char* tag, const char* message) {
 }
 
 void Logger::writef(LogLevel level, const char* tag, const char* format, va_list args) {
+    if (output == nullptr || !shouldLog(level)) {
+        return;
+    }
+
     char message[160];
     vsnprintf(message, sizeof(message), format, args);
     write(level, tag, message);

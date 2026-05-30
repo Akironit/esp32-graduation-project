@@ -82,14 +82,14 @@ void App::begin() {
     console.begin(&hp, &vfd, &tempSensors, &display, &state, &controller, &climateAlgorithm);
     display.begin();
 
-    network.begin();
+    network.begin(state.settings.wifiEnabled);
 
     if (network.isConnected()) {
         console.startTelnet();
     }
 
     homeAssistant.begin(
-        state.settings.mqttEnabled,
+        state.settings.wifiEnabled && state.settings.mqttEnabled,
         MQTT_HOST,
         MQTT_PORT,
         MQTT_USER,
@@ -127,7 +127,7 @@ void App::update() {
     updateHeatPump();
     updateIoExpanderInputs();
 
-    homeAssistant.update(network.isConnected());
+    homeAssistant.update(state.settings.wifiEnabled && network.isConnected());
     vfd.update();
     updateHeatPump();
     updateIoExpanderInputs();
@@ -138,7 +138,7 @@ void App::update() {
 
     if (state.settings.mqttEnabled != lastMqttEnabled) {
         lastMqttEnabled = state.settings.mqttEnabled;
-        homeAssistant.setEnabled(state.settings.mqttEnabled);
+        homeAssistant.setEnabled(state.settings.wifiEnabled && state.settings.mqttEnabled);
         scheduleUserSettingsSave();
     }
 
@@ -179,7 +179,11 @@ void App::updateHeatPump() {
 
 
 void App::updateVfdStatus() {
-    if (vfdCommandSyncActive) {
+    if (!state.settings.vfdPollingEnabled) {
+        return;
+    }
+
+    if (vfdSyncState == VfdSyncState::WaitingWriteAck) {
         return;
     }
 
@@ -203,90 +207,94 @@ void App::updateVfdStatus() {
 
 
 bool App::updateVfdCommandSync() {
-    if (!vfdCommandSyncActive || state.controllerState.mode != DeviceMode::Manual) {
+    if (vfdSyncState == VfdSyncState::Idle) {
         return false;
     }
 
-    if (vfd.isBusy()) {
-        return false;
-    }
-
-    if (isVfdDesiredStateReached()) {
-        Logger::tracef(
-            TAG_VFD_UI,
-            "VFD desired state reached after %u sync attempts",
-            vfdCommandSyncAttempts
-        );
-        vfdCommandSyncActive = false;
+    if (state.controllerState.mode != DeviceMode::Manual) {
+        vfdSyncState = VfdSyncState::Idle;
         return false;
     }
 
     const unsigned long now = millis();
-    if (now - lastVfdCommandSyncMs < AppConfig::VFD_COMMAND_SYNC_INTERVAL_MS) {
-        return false;
-    }
 
-    if (vfdCommandSyncAttempts >= AppConfig::VFD_COMMAND_SYNC_MAX_ATTEMPTS) {
+    if (vfdSyncState == VfdSyncState::WaitingWriteAck) {
+        if (vfd.hasRecentWriteAck(pendingVfdAddress, pendingVfdValue, pendingVfdStartedMs)) {
+            Logger::infof(
+                TAG_VFD_UI,
+                "VFD command accepted address=0x%04X value=0x%04X desiredPower=%u desiredStep=%u",
+                pendingVfdAddress,
+                pendingVfdValue,
+                pendingVfdDesiredPower ? 1 : 0,
+                pendingVfdDesiredStep
+            );
+            vfdSyncState = VfdSyncState::WaitingStatusVerify;
+            return false;
+        }
+
+        if (now - pendingVfdLastSendMs < AppConfig::VFD_COMMAND_ACK_TIMEOUT_MS) {
+            return false;
+        }
+
+        if (pendingVfdRetryCount < AppConfig::VFD_COMMAND_RETRY_LIMIT) {
+            pendingVfdRetryCount++;
+            Logger::warningf(
+                TAG_VFD_UI,
+                "VFD command ack timeout, retry=%u address=0x%04X value=0x%04X",
+                pendingVfdRetryCount,
+                pendingVfdAddress,
+                pendingVfdValue
+            );
+            return sendPendingVfdCommand("display-sync-retry");
+        }
+
         Logger::warningf(
             TAG_VFD_UI,
-            "VFD sync stopped after %u attempts desiredPower=%u desiredStep=%u actualRunning=%u actualStep=%u actualHz=%.1f",
-            vfdCommandSyncAttempts,
-            state.settings.manualVfdPower ? 1 : 0,
-            state.settings.manualVfdStep,
-            vfd.isRunning() ? 1 : 0,
-            vfd.getActualStep(),
-            vfd.hasActualFrequency() ? vfd.getActualFrequencyHz() : -1.0f
+            "VFD command failed: no write ack address=0x%04X value=0x%04X",
+            pendingVfdAddress,
+            pendingVfdValue
         );
-        vfdCommandSyncActive = false;
+        vfdSyncState = VfdSyncState::Failed;
         return false;
     }
 
-    lastVfdCommandSyncMs = now;
-    vfdCommandSyncAttempts++;
-
-    Logger::tracef(
-        TAG_VFD_UI,
-        "VFD sync attempt=%u desiredPower=%u desiredStep=%u actualRunning=%u actualStep=%u actualHz=%.1f",
-        vfdCommandSyncAttempts,
-        state.settings.manualVfdPower ? 1 : 0,
-        state.settings.manualVfdStep,
-        vfd.isRunning() ? 1 : 0,
-        vfd.getActualStep(),
-        vfd.hasActualFrequency() ? vfd.getActualFrequencyHz() : -1.0f
-    );
-
-    if (!state.settings.manualVfdPower) {
-        controller.vfdStop("display-sync", vfdCommandSyncActive);
-        return true;
-    }
-
-    if (state.settings.manualVfdStep == 0) {
-        vfdCommandSyncActive = false;
+    if (vfdSyncState == VfdSyncState::WaitingStatusVerify) {
+        if (isPendingVfdStatusVerified()) {
+            Logger::infof(
+                TAG_VFD_UI,
+                "VFD command verified desiredPower=%u desiredStep=%u actualRunning=%u actualStep=%u actualHz=%.1f",
+                pendingVfdDesiredPower ? 1 : 0,
+                pendingVfdDesiredStep,
+                vfd.isRunning() ? 1 : 0,
+                vfd.getActualStep(),
+                vfd.hasActualFrequency() ? vfd.getActualFrequencyHz() : -1.0f
+            );
+            vfdSyncState = VfdSyncState::Idle;
+            if (!isVfdDesiredStateReached()) {
+                requestVfdCommandSync("display-sync next");
+            }
+        } else if (now - pendingVfdStartedMs >= AppConfig::VFD_COMMAND_VERIFY_TIMEOUT_MS) {
+            Logger::warningf(
+                TAG_VFD_UI,
+                "VFD command accepted but status not verified desiredPower=%u desiredStep=%u actualRunning=%u actualStep=%u actualHz=%.1f",
+                pendingVfdDesiredPower ? 1 : 0,
+                pendingVfdDesiredStep,
+                vfd.isRunning() ? 1 : 0,
+                vfd.getActualStep(),
+                vfd.hasActualFrequency() ? vfd.getActualFrequencyHz() : -1.0f
+            );
+            vfdSyncState = VfdSyncState::Idle;
+            if (!isVfdDesiredStateReached()) {
+                requestVfdCommandSync("display-sync next after verify timeout");
+            }
+        }
         return false;
     }
 
-    const float desiredHz = vfdStepToHz(state.settings.manualVfdStep);
-    const bool requestedFrequencyMatches = vfd.hasRequestedFrequency()
-        && fabsf(vfd.getRequestedFrequencyHz() - desiredHz) <= 0.5f;
-    const bool actualFrequencyMatches = vfd.hasActualFrequency()
-        && fabsf(vfd.getActualFrequencyHz() - desiredHz) <= 0.75f;
-
-    if (!requestedFrequencyMatches && (!vfd.isRunning() || !actualFrequencyMatches)) {
-        controller.vfdSetFrequency(desiredHz, "display-sync", vfdCommandSyncActive);
-        return true;
+    if (vfdSyncState == VfdSyncState::Failed) {
+        vfdSyncState = VfdSyncState::Idle;
     }
 
-    if (!vfd.isRunning()) {
-        controller.vfdForward("display-sync", vfdCommandSyncActive);
-        return true;
-    }
-
-    if (!actualFrequencyMatches) {
-        controller.vfdSetFrequency(desiredHz, "display-sync", vfdCommandSyncActive);
-        return true;
-    }
-
-    vfdCommandSyncActive = false;
     return false;
 }
 
@@ -332,10 +340,11 @@ void App::updateDeviceState() {
     state.ac.lastFrameSourceAddress = hp.getLastFrameSourceAddress();
     state.ac.lastFrameDestinationAddress = hp.getLastFrameDestinationAddress();
     state.ac.lastFrameType = hp.getLastFrameMessageType();
-    state.ac.hasReceivedFrame = hp.hasReceivedFrame();
-    state.ac.lastFrameAgeMs = hp.hasReceivedFrame() ? hp.getLastFrameAgeMs() : 0;
-    state.ac.communicationError = hp.hasCommunicationError();
-    state.ac.consecutiveErrorCount = hp.getConsecutiveErrorCount();
+    const bool acHasFrame = hp.hasReceivedFrame();
+    state.ac.hasReceivedFrame = acHasFrame;
+    state.ac.lastFrameAgeMs = acHasFrame ? hp.getLastFrameAgeMs() : 0;
+    state.ac.communicationError = acHasFrame && hp.hasCommunicationError();
+    state.ac.consecutiveErrorCount = acHasFrame ? hp.getConsecutiveErrorCount() : 0;
     state.ac.errorCount = hp.getErrorCount();
     state.ac.updateFields = hp.getUpdateFields();
 
@@ -459,7 +468,7 @@ void App::updateDiagnostics(const AutoControlStatus& autoStatus, const AutoContr
     const bool acExpected = state.controllerState.mode == DeviceMode::Auto
         ? (autoSettings.allowAcCooling || autoSettings.allowAcHeating || autoSettings.keepAcFanOnInAuto || autoSettings.keepAcFanOnWithVent)
         : state.settings.manualAcPower;
-    if (acExpected && (!state.ac.bound || state.ac.communicationError || !state.ac.hasReceivedFrame)) {
+    if (acExpected && state.ac.hasReceivedFrame && (!state.ac.bound || state.ac.communicationError)) {
         snprintf(details, sizeof(details), "bound=%u err=%u last=%lus", state.ac.bound ? 1 : 0, state.ac.communicationError ? 1 : 0, state.ac.hasReceivedFrame ? state.ac.lastFrameAgeMs / 1000UL : 0UL);
         add(DiagnosticSeverity::Error, DiagnosticCode::AcLinkLost, "AC LINK LOST", details, "Check AC bus wiring / restart AC");
     }
@@ -731,22 +740,20 @@ void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
             controller.setAcFanMode(action.uintValue);
             break;
         case DisplayUi::ActionType::VfdStop:
-            if (!vfd.isBusy()) {
-                controller.vfdStop("display", vfdCommandSyncActive);
-            }
-            requestVfdCommandSync("display stop confirm");
+            requestVfdCommandSync("display stop", 0x2000, 0x0005, false, 0, 0.0f);
             break;
         case DisplayUi::ActionType::VfdForward:
-            if (!vfd.isBusy()) {
-                controller.vfdForward("display", vfdCommandSyncActive);
-            }
-            requestVfdCommandSync("display forward confirm");
+            requestVfdCommandSync("display forward", 0x2000, 0x0001, true, state.settings.manualVfdStep, vfdStepToHz(state.settings.manualVfdStep));
             break;
         case DisplayUi::ActionType::VfdSetFrequency:
-            if (!vfd.isBusy()) {
-                controller.vfdSetFrequency(vfdStepToHz(state.settings.manualVfdStep), "display", vfdCommandSyncActive);
-            }
-            requestVfdCommandSync("display frequency confirm");
+            requestVfdCommandSync(
+                "display frequency",
+                0x2001,
+                (uint16_t)lroundf(vfdStepToHz(state.settings.manualVfdStep) * 100.0f),
+                state.settings.manualVfdPower,
+                state.settings.manualVfdStep,
+                vfdStepToHz(state.settings.manualVfdStep)
+            );
             break;
         case DisplayUi::ActionType::AutoSettings:
             climateAlgorithm.setSettings(action.autoSettings);
@@ -774,6 +781,21 @@ void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
                 Logger::warning(TAG_SETTINGS, "Temperature role swap failed");
             }
             break;
+        case DisplayUi::ActionType::SystemSettings:
+            network.setEnabled(state.settings.wifiEnabled);
+            homeAssistant.setEnabled(state.settings.wifiEnabled && state.settings.mqttEnabled);
+            lastMqttEnabled = state.settings.mqttEnabled;
+            if (action.uintValue == 2) {
+                saveUserSettings();
+            }
+            break;
+        case DisplayUi::ActionType::SystemSaveNow:
+            saveUserSettings();
+            break;
+        case DisplayUi::ActionType::SystemReboot:
+            saveUserSettings();
+            controller.restart(250);
+            break;
         case DisplayUi::ActionType::None:
             break;
     }
@@ -781,16 +803,107 @@ void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
 
 
 void App::requestVfdCommandSync(const char* reason) {
-    vfdCommandSyncActive = true;
-    vfdCommandSyncAttempts = 0;
-    lastVfdCommandSyncMs = 0;
-    Logger::tracef(
+    if (!state.settings.manualVfdPower || state.settings.manualVfdStep == 0) {
+        requestVfdCommandSync(reason, 0x2000, 0x0005, false, 0, 0.0f);
+        return;
+    }
+
+    const float desiredHz = vfdStepToHz(state.settings.manualVfdStep);
+    const uint16_t desiredValue = (uint16_t)lroundf(desiredHz * 100.0f);
+    const bool requestedFrequencyMatches = vfd.hasRequestedFrequency()
+        && fabsf(vfd.getRequestedFrequencyHz() - desiredHz) <= 0.5f;
+
+    if (!requestedFrequencyMatches) {
+        requestVfdCommandSync(reason, 0x2001, desiredValue, true, state.settings.manualVfdStep, desiredHz);
+        return;
+    }
+
+    if (!vfd.isRunning()) {
+        requestVfdCommandSync(reason, 0x2000, 0x0001, true, state.settings.manualVfdStep, desiredHz);
+        return;
+    }
+
+    if (vfd.hasActualFrequency() && fabsf(vfd.getActualFrequencyHz() - desiredHz) > 0.75f) {
+        requestVfdCommandSync(reason, 0x2001, desiredValue, true, state.settings.manualVfdStep, desiredHz);
+        return;
+    }
+
+    Logger::tracef(TAG_VFD_UI, "VFD sync not needed: %s", reason);
+}
+
+
+void App::requestVfdCommandSync(const char* reason, uint16_t address, uint16_t value, bool desiredPower, uint8_t desiredStep, float desiredHz) {
+    pendingVfdAddress = address;
+    pendingVfdValue = value;
+    pendingVfdDesiredPower = desiredPower;
+    pendingVfdDesiredStep = desiredStep;
+    pendingVfdDesiredHz = desiredHz;
+    pendingVfdRetryCount = 0;
+    pendingVfdStartedMs = millis();
+    pendingVfdLastSendMs = 0;
+    vfdSyncState = VfdSyncState::WaitingWriteAck;
+
+    Logger::infof(
         TAG_VFD_UI,
-        "VFD sync requested: %s desiredPower=%u desiredStep=%u",
+        "VFD sync requested: %s address=0x%04X value=0x%04X desiredPower=%u desiredStep=%u desiredHz=%.1f",
         reason,
-        state.settings.manualVfdPower ? 1 : 0,
-        state.settings.manualVfdStep
+        pendingVfdAddress,
+        pendingVfdValue,
+        pendingVfdDesiredPower ? 1 : 0,
+        pendingVfdDesiredStep,
+        pendingVfdDesiredHz
     );
+
+    if (!sendPendingVfdCommand("display")) {
+        vfdSyncState = VfdSyncState::Failed;
+    }
+}
+
+
+bool App::sendPendingVfdCommand(const char* source) {
+    bool queued = false;
+    if (pendingVfdAddress == 0x2000 && pendingVfdValue == 0x0001) {
+        queued = controller.vfdForward(source, true);
+    } else if (pendingVfdAddress == 0x2000 && pendingVfdValue == 0x0005) {
+        queued = controller.vfdStop(source, true);
+    } else if (pendingVfdAddress == 0x2001) {
+        queued = controller.vfdSetFrequency(pendingVfdValue / 100.0f, source, true);
+    } else {
+        queued = vfd.writeRegister(pendingVfdAddress, pendingVfdValue);
+    }
+
+    if (queued) {
+        pendingVfdLastSendMs = millis();
+        lastVfdCommandSyncMs = pendingVfdLastSendMs;
+    } else {
+        Logger::warningf(
+            TAG_VFD_UI,
+            "VFD command queue failed source=%s address=0x%04X value=0x%04X",
+            source,
+            pendingVfdAddress,
+            pendingVfdValue
+        );
+    }
+
+    return queued;
+}
+
+
+bool App::isPendingVfdStatusVerified() const {
+    if (pendingVfdAddress == 0x2000) {
+        if (!pendingVfdDesiredPower) {
+            return !vfd.isRunning();
+        }
+
+        return vfd.isRunning();
+    }
+
+    if (pendingVfdAddress == 0x2001) {
+        return vfd.hasRequestedFrequency()
+            && fabsf(vfd.getRequestedFrequencyHz() - pendingVfdDesiredHz) <= 0.5f;
+    }
+
+    return false;
 }
 
 
@@ -898,7 +1011,10 @@ void App::loadUserSettings() {
     state.settings.mode = mode == static_cast<uint8_t>(DeviceMode::Manual)
         ? DeviceMode::Manual
         : (mode == static_cast<uint8_t>(DeviceMode::Disabled) ? DeviceMode::Disabled : DeviceMode::Auto);
+    state.settings.wifiEnabled = preferences.getBool("wifiEnabled", true);
     state.settings.mqttEnabled = preferences.getBool("mqttEnabled", MQTT_ENABLED);
+    state.settings.autoSaveEnabled = preferences.getBool("autoSave", true);
+    state.settings.vfdPollingEnabled = preferences.getBool("vfdPolling", true);
     lastMqttEnabled = state.settings.mqttEnabled;
     state.settings.targetIndoorTempC = constrain(targetTemp, 16.0f, 30.0f);
     state.settings.manualAcPower = preferences.getBool("acPower", state.settings.manualAcPower);
@@ -947,6 +1063,11 @@ void App::loadUserSettings() {
 
 
 void App::scheduleUserSettingsSave() {
+    if (!state.settings.autoSaveEnabled) {
+        Logger::trace(TAG_SETTINGS, "User settings autosave skipped because it is disabled");
+        return;
+    }
+
     settingsDirty = true;
     lastSettingsChangeMs = millis();
     Logger::trace(TAG_SETTINGS, "User settings save scheduled");
@@ -974,7 +1095,10 @@ void App::saveUserSettings() {
     }
 
     preferences.putUChar("mode", static_cast<uint8_t>(state.settings.mode));
+    preferences.putBool("wifiEnabled", state.settings.wifiEnabled);
     preferences.putBool("mqttEnabled", state.settings.mqttEnabled);
+    preferences.putBool("autoSave", state.settings.autoSaveEnabled);
+    preferences.putBool("vfdPolling", state.settings.vfdPollingEnabled);
     preferences.putFloat("setTemp", state.settings.targetIndoorTempC);
     preferences.putBool("acPower", state.settings.manualAcPower);
     preferences.putUChar("acMode", state.settings.manualAcMode);

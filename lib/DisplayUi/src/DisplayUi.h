@@ -15,6 +15,7 @@ public:
         Ventilation,
         Temperatures,
         Settings,
+        SystemSettings,
         Diagnostics,
         Count
     };
@@ -40,7 +41,10 @@ public:
         TempForget,
         TempForceRead,
         TempScan,
-        TempSwap
+        TempSwap,
+        SystemSettings,
+        SystemSaveNow,
+        SystemReboot
     };
 
     struct Action {
@@ -92,6 +96,17 @@ private:
     uint8_t selectedAutoSetting = 0;
     uint8_t autoSettingsScroll = 0;
     float autoEditValue = 0.0f;
+    enum class SystemPageMode : uint8_t {
+        View,
+        Select,
+        Edit,
+        ConfirmReboot
+    };
+    SystemPageMode systemPageMode = SystemPageMode::View;
+    uint8_t selectedSystemSetting = 0;
+    uint8_t systemSettingsScroll = 0;
+    bool systemEditValue = false;
+    bool systemRebootYes = false;
     enum class TempPageMode : uint8_t {
         View,
         Config,
@@ -110,6 +125,8 @@ private:
     bool shellRedraw = true;
     bool lastHeaderWifiConnected = false;
     bool lastHeaderHaConnected = false;
+    bool lastHeaderWifiEnabled = false;
+    bool lastHeaderHaEnabled = false;
     bool headerStatusCached = false;
     const char* lastInteractionLabel = nullptr;
     bool lastInteractionEdit = false;
@@ -121,6 +138,7 @@ private:
     static constexpr unsigned long RENDER_INTERVAL_MS = 1000;
     static constexpr uint8_t LINE_CACHE_SIZE = 40;
     static constexpr uint8_t AUTO_VISIBLE_ROWS = 8;
+    static constexpr uint8_t SYSTEM_VISIBLE_ROWS = 6;
     static constexpr uint8_t TEMP_VISIBLE_ROWS = 6;
     static constexpr uint8_t DIAG_VISIBLE_ROWS = 12;
     String lineCache[LINE_CACHE_SIZE];
@@ -135,6 +153,13 @@ private:
     bool lastAutoRowSelected[AUTO_VISIBLE_ROWS] = {};
     bool lastAutoRowEdit[AUTO_VISIBLE_ROWS] = {};
     String lastAutoRowValue[AUTO_VISIBLE_ROWS];
+    bool systemPageCacheValid = false;
+    uint8_t lastSystemVisibleStart = 255;
+    uint8_t lastSystemSelectedIndex = 255;
+    SystemPageMode lastSystemPageMode = SystemPageMode::View;
+    uint8_t lastSystemRowIndex[SYSTEM_VISIBLE_ROWS] = {};
+    bool lastSystemRowSelected[SYSTEM_VISIBLE_ROWS] = {};
+    String lastSystemRowValue[SYSTEM_VISIBLE_ROWS];
     bool tempPageCacheValid = false;
     TempPageMode lastTempPageMode = TempPageMode::View;
     uint8_t lastTempVisibleStart = 255;
@@ -171,6 +196,7 @@ private:
     void drawAirConditioner(const AcStateSnapshot& ac);
     void drawVentilation(const DeviceState& state);
     void drawSettings(const DeviceState& state, const AutoControlSettings& autoSettings);
+    void drawSystemSettings(const DeviceState& state);
     void drawDiagnostics(const DeviceState& state);
     void drawPlaceholder(const char* title, const char* line1, const char* line2);
     void drawPanel(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
@@ -196,6 +222,7 @@ private:
     void changeEditValue(int8_t direction);
     Action applyEdit(DeviceState& state);
     Action handleAutoSettingsButton(Button button, bool longPress, const AutoControlSettings& autoSettings);
+    Action handleSystemSettingsButton(Button button, bool longPress, DeviceState& state);
     Action handleTemperatureButton(Button button, bool longPress, const TemperatureStateSnapshot& temperatures);
     Action handleDiagnosticsButton(Button button, bool longPress, const DeviceState& state);
     void enterAutoSettingsSelect();
@@ -203,6 +230,7 @@ private:
     void moveAutoSettingsSelection(int8_t direction);
     void changeAutoSettingsValue(int8_t direction, bool fast);
     Action applyAutoSettingsEdit(const AutoControlSettings& autoSettings);
+    Action applySystemSettingsEdit(DeviceState& state);
     Action applyTemperatureMenuAction(const TemperatureStateSnapshot& temperatures);
     Action applyTemperatureRole(const TemperatureStateSnapshot& temperatures);
     const char* tempRoleShort(TempSensorRole role) const;

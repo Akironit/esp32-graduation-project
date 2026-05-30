@@ -202,7 +202,10 @@ struct EnvironmentStateSnapshot {
 
 struct UserSettingsSnapshot {
     DeviceMode mode = DeviceMode::Auto;
+    bool wifiEnabled = true;
     bool mqttEnabled = true;
+    bool autoSaveEnabled = true;
+    bool vfdPollingEnabled = true;
     float targetIndoorTempC = 22.0f;
     bool manualAcPower = false;
     uint8_t manualAcMode = 5;

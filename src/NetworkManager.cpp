@@ -22,8 +22,16 @@ NetworkManager::NetworkManager(
       otaPassword(otaPassword) {
 }
 
-void NetworkManager::begin() {
+void NetworkManager::begin(bool enabled) {
+    this->enabled = enabled;
     Logger::info(TAG_NET, "Initializing network...");
+
+    if (!this->enabled) {
+        Logger::info(TAG_NET, "Wi-Fi disabled by settings");
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        return;
+    }
 
     WiFi.mode(WIFI_STA);
     WiFi.setHostname(hostname);
@@ -37,8 +45,17 @@ void NetworkManager::begin() {
 }
 
 void NetworkManager::update() {
+    if (!enabled) {
+        return;
+    }
+
     if (isConnected()) {
-        ArduinoOTA.handle();
+        if (!otaStarted) {
+            setupOTA();
+        }
+        if (otaStarted) {
+            ArduinoOTA.handle();
+        }
         return;
     }
 
@@ -54,11 +71,40 @@ void NetworkManager::update() {
 }
 
 bool NetworkManager::isConnected() const {
-    return WiFi.status() == WL_CONNECTED;
+    return enabled && WiFi.status() == WL_CONNECTED;
 }
 
 IPAddress NetworkManager::getIp() const {
     return WiFi.localIP();
+}
+
+void NetworkManager::setEnabled(bool enabled) {
+    if (this->enabled == enabled) {
+        return;
+    }
+
+    this->enabled = enabled;
+    lastReconnectAttemptMs = 0;
+
+    if (!this->enabled) {
+        Logger::info(TAG_NET, "Wi-Fi disabled");
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        return;
+    }
+
+    Logger::info(TAG_NET, "Wi-Fi enabled");
+    WiFi.mode(WIFI_STA);
+    WiFi.setHostname(hostname);
+    WiFi.setAutoReconnect(true);
+    connectWiFi();
+    if (isConnected() && !otaStarted) {
+        setupOTA();
+    }
+}
+
+bool NetworkManager::isEnabled() const {
+    return enabled;
 }
 
 void NetworkManager::connectWiFi() {
@@ -122,6 +168,7 @@ void NetworkManager::setupOTA() {
     });
 
     ArduinoOTA.begin();
+    otaStarted = true;
 
     Logger::info(TAG_OTA, "Ready");
     Logger::infof(TAG_OTA, "Hostname: %s", hostname);

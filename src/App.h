@@ -78,9 +78,19 @@ private:
     void applyManualSettingsProfile(const char* reason);
     void updateVentilationInputs(int gpa5State, int gpa6State, int gpa7State, int exhaustState);
     void requestVfdCommandSync(const char* reason);
+    void requestVfdCommandSync(const char* reason, uint16_t address, uint16_t value, bool desiredPower, uint8_t desiredStep, float desiredHz);
+    bool sendPendingVfdCommand(const char* source);
+    bool isPendingVfdStatusVerified() const;
     bool isVfdDesiredStateReached() const;
     float vfdStepToHz(uint8_t step) const;
     void logVfdStateChanges();
+
+    enum class VfdSyncState : uint8_t {
+        Idle,
+        WaitingWriteAck,
+        WaitingStatusVerify,
+        Failed
+    };
 
     FujiHeatPump hp;
     SerialConsole console;
@@ -107,8 +117,15 @@ private:
     uint32_t lastUptimeSecond = UINT32_MAX;
     unsigned long lastVfdStatusPollMs = 0;
     unsigned long lastVfdCommandSyncMs = 0;
-    bool vfdCommandSyncActive = false;
-    uint16_t vfdCommandSyncAttempts = 0;
+    VfdSyncState vfdSyncState = VfdSyncState::Idle;
+    uint16_t pendingVfdAddress = 0;
+    uint16_t pendingVfdValue = 0;
+    unsigned long pendingVfdStartedMs = 0;
+    unsigned long pendingVfdLastSendMs = 0;
+    uint8_t pendingVfdRetryCount = 0;
+    bool pendingVfdDesiredPower = false;
+    uint8_t pendingVfdDesiredStep = 0;
+    float pendingVfdDesiredHz = 0.0f;
     bool settingsDirty = false;
     unsigned long lastSettingsChangeMs = 0;
     bool modeTransitionInitialized = false;

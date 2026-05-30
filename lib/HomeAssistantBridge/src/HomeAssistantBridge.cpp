@@ -280,7 +280,7 @@ void HomeAssistantBridge::publishDiscovery() {
         "climate_controller_display_page",
         "state/display/page",
         "cmd/display/page",
-        "[\"overview\",\"ac\",\"vent\",\"temp\",\"settings\",\"diag\",\"next\",\"prev\"]"
+        "[\"overview\",\"ac\",\"vent\",\"temp\",\"settings\",\"system\",\"diag\",\"next\",\"prev\"]"
     );
 
     discoveryPublished = true;
@@ -566,8 +566,10 @@ void HomeAssistantBridge::handleCommand(const String& suffix, const String& payl
             controller->displaySetPage(DisplayUi::Page::Ventilation);
         } else if (payload == "temp" || payload == "temperatures") {
             controller->displaySetPage(DisplayUi::Page::Temperatures);
-        } else if (payload == "settings" || payload == "network") {
+        } else if (payload == "settings" || payload == "auto") {
             controller->displaySetPage(DisplayUi::Page::Settings);
+        } else if (payload == "system" || payload == "network") {
+            controller->displaySetPage(DisplayUi::Page::SystemSettings);
         } else if (payload == "diag" || payload == "diagnostics") {
             controller->displaySetPage(DisplayUi::Page::Diagnostics);
         }
