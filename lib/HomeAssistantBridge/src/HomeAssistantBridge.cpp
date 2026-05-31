@@ -292,18 +292,22 @@ void HomeAssistantBridge::publishState() {
     publishTopicf("state/ac/errors", "%lu", (unsigned long)state->ac.errorCount);
     publishTopicf("state/ac/consecutive_errors", "%u", state->ac.consecutiveErrorCount);
 
-    if (state->environment.hasIndoorTemp) {
+    const auto validTemperature = [](float value) {
+        return value > -100.0f && value < 100.0f && value != DEVICE_DISCONNECTED_C;
+    };
+
+    if (state->environment.hasIndoorTemp && validTemperature(state->environment.indoorTempC)) {
         publishTopicf("state/temp/indoor", "%.2f", state->environment.indoorTempC);
     } else {
         publishTopic("state/temp/indoor", "unknown", true);
     }
-    if (state->environment.hasOutdoorTemp) {
+    if (state->environment.hasOutdoorTemp && validTemperature(state->environment.outdoorTempC)) {
         publishTopicf("state/temp/outdoor", "%.2f", state->environment.outdoorTempC);
     } else {
         publishTopic("state/temp/outdoor", "unknown", true);
     }
     publishTopicf("state/temp/target", "%.1f", state->environment.targetIndoorTempC);
-    if (state->environment.hasIndoorTemp) {
+    if (state->environment.hasIndoorTemp && validTemperature(state->environment.indoorTempC)) {
         publishTopicf("state/temp/delta", "%.2f", state->environment.indoorTempC - state->environment.targetIndoorTempC);
     } else {
         publishTopic("state/temp/delta", "unknown", true);
@@ -314,7 +318,11 @@ void HomeAssistantBridge::publishState() {
     for (uint8_t i = 0; i < state->temperatures.sensorCount && i < TEMP_MAX_SENSORS; i++) {
         char suffix[32];
         snprintf(suffix, sizeof(suffix), "state/temp/%u", i);
-        publishTopicf(suffix, "%.2f", state->temperatures.values[i]);
+        if (state->temperatures.sensors[i].hasTemperature && validTemperature(state->temperatures.values[i])) {
+            publishTopicf(suffix, "%.2f", state->temperatures.values[i]);
+        } else {
+            publishTopic(suffix, "unknown", true);
+        }
     }
 
     publishTopic("state/vfd/last_action", state->vfd.lastAction, true);
@@ -366,6 +374,14 @@ void HomeAssistantBridge::publishState() {
     publishTopic("state/system/vfd_polling_enabled", state->settings.vfdPollingEnabled ? "ON" : "OFF", true);
     publishTopic("state/system/auto_save_enabled", state->settings.autoSaveEnabled ? "ON" : "OFF", true);
     publishTopic("state/system/ha_connected", isConnected() ? "ON" : "OFF", true);
+    publishTopic("state/system/io_expander_ready", state->input.ioExpanderReady && !state->input.ioExpanderCommunicationError ? "ON" : "OFF", true);
+    publishTopic(
+        "state/system/io_expander",
+        state->input.ioExpanderCommunicationError ? "error" : (state->input.ioExpanderReady ? "online" : "offline"),
+        true
+    );
+    publishTopicf("state/system/io_expander_errors", "%lu", (unsigned long)state->input.ioExpanderErrorCount);
+    publishTopicf("state/system/io_expander_consecutive_errors", "%u", state->input.ioExpanderConsecutiveErrorCount);
     publishTopicf("state/system/ha_publish_count", "%lu", (unsigned long)publishCount);
     publishTopicf("state/system/ha_command_count", "%lu", (unsigned long)commandCount);
     publishTopicf("state/system/ha_reconnect_count", "%lu", (unsigned long)reconnectCount);
@@ -397,18 +413,18 @@ void HomeAssistantBridge::publishDiscovery() {
     publishSwitchDiscovery("ac_power", "AC power", "climate_controller_ac_power", "state/ac/power", "cmd/ac/power");
     publishBinarySensorDiscovery("ac_bound", "AC bound", "climate_controller_ac_bound", "state/ac/bound", "connectivity");
     publishSensorDiscovery("ac_link", "AC link", "climate_controller_ac_link", "state/ac/link");
-    publishNumberDiscovery("ac_temp", "AC temperature", "climate_controller_ac_temperature", "state/ac/temp", "cmd/ac/temp", 16, 30, 1, "C");
-    publishSensorDiscovery("ac_controller_temperature", "AC controller temperature", "climate_controller_ac_controller_temperature", "state/ac/controller_temp", "temperature", "C", "measurement");
+    publishNumberDiscovery("ac_temp", "AC temperature", "climate_controller_ac_temperature", "state/ac/temp", "cmd/ac/temp", 16, 30, 1, "°C");
+    publishSensorDiscovery("ac_controller_temperature", "AC controller temperature", "climate_controller_ac_controller_temperature", "state/ac/controller_temp", "temperature", "°C", "measurement");
     publishSelectDiscovery("ac_fan", "AC fan", "climate_controller_ac_fan", "state/ac/fan", "cmd/ac/fan", "[\"auto\",\"low\",\"medium\",\"high\",\"max\"]");
     publishSelectDiscovery("ac_mode", "AC mode", "climate_controller_ac_mode", "state/ac/mode", "cmd/ac/mode", "[\"unknown\",\"fan\",\"dry\",\"cool\",\"heat\",\"auto\"]");
     publishSensorDiscovery("ac_role", "AC role", "climate_controller_ac_role", "state/ac/role");
     publishSensorDiscovery("ac_errors", "AC errors", "climate_controller_ac_errors", "state/ac/errors", nullptr, nullptr, "total_increasing");
     publishSensorDiscovery("ac_consecutive_errors", "AC consecutive errors", "climate_controller_ac_consecutive_errors", "state/ac/consecutive_errors");
 
-    publishSensorDiscovery("indoor_temperature", "Indoor temperature", "climate_controller_indoor_temperature", "state/temp/indoor", "temperature", "C", "measurement");
-    publishSensorDiscovery("outdoor_temperature", "Outdoor temperature", "climate_controller_outdoor_temperature", "state/temp/outdoor", "temperature", "C", "measurement");
-    publishSensorDiscovery("auto_target_temperature", "Auto target temperature", "climate_controller_auto_target_temperature", "state/temp/target", "temperature", "C", "measurement");
-    publishSensorDiscovery("indoor_temperature_delta", "Indoor temperature delta", "climate_controller_indoor_temperature_delta", "state/temp/delta", "temperature", "C", "measurement");
+    publishSensorDiscovery("indoor_temperature", "Indoor temperature", "climate_controller_indoor_temperature", "state/temp/indoor", "temperature", "°C", "measurement");
+    publishSensorDiscovery("outdoor_temperature", "Outdoor temperature", "climate_controller_outdoor_temperature", "state/temp/outdoor", "temperature", "°C", "measurement");
+    publishSensorDiscovery("auto_target_temperature", "Auto target temperature", "climate_controller_auto_target_temperature", "state/temp/target", "temperature", "°C", "measurement");
+    publishSensorDiscovery("indoor_temperature_delta", "Indoor temperature delta", "climate_controller_indoor_temperature_delta", "state/temp/delta", "temperature", "°C", "measurement");
 
     publishSensorDiscovery("temperature_count", "Temperature sensor count", "climate_controller_temperature_count", "state/temp/count");
 
@@ -421,7 +437,7 @@ void HomeAssistantBridge::publishDiscovery() {
         snprintf(name, sizeof(name), "Temperature %u", i);
         snprintf(entityObjectId, sizeof(entityObjectId), "climate_controller_temperature_%u", i);
         snprintf(suffix, sizeof(suffix), "state/temp/%u", i);
-        publishSensorDiscovery(objectId, name, entityObjectId, suffix, "temperature", "C", "measurement");
+        publishSensorDiscovery(objectId, name, entityObjectId, suffix, "temperature", "°C", "measurement");
     }
 
     publishSensorDiscovery("vfd_last_action", "VFD last action", "climate_controller_vfd_last_action", "state/vfd/last_action");
@@ -458,13 +474,17 @@ void HomeAssistantBridge::publishDiscovery() {
     publishSwitchDiscovery("auto_dry_run", "Auto dry run", "climate_controller_auto_dry_run", "state/auto/dry_run", "cmd/auto/dry_run");
     publishSwitchDiscovery("auto_diagnostic_verbose", "Auto diagnostic verbose", "climate_controller_auto_diagnostic_verbose", "state/auto/diagnostic_verbose", "cmd/auto/diagnostic_verbose");
     publishSwitchDiscovery("manual_vent_compensation", "Manual vent compensation", "climate_controller_manual_vent_compensation", "state/auto/manual_vent_compensation", "cmd/auto/manual_vent_compensation");
-    publishNumberDiscovery("auto_target_temp", "Auto target temp", "climate_controller_auto_target_temp", "state/auto/target_temp", "cmd/auto/target_temp", "16", "30", "0.5", "C");
-    publishNumberDiscovery("cooling_start_delta", "Cooling start delta", "climate_controller_cooling_start_delta", "state/auto/cooling_delta", "cmd/auto/cooling_delta", "0.1", "5", "0.1", "C");
-    publishNumberDiscovery("heating_start_delta", "Heating start delta", "climate_controller_heating_start_delta", "state/auto/heating_delta", "cmd/auto/heating_delta", "0.1", "5", "0.1", "C");
+    publishNumberDiscovery("auto_target_temp", "Auto target temp", "climate_controller_auto_target_temp", "state/auto/target_temp", "cmd/auto/target_temp", "16", "30", "0.5", "°C");
+    publishNumberDiscovery("cooling_start_delta", "Cooling start delta", "climate_controller_cooling_start_delta", "state/auto/cooling_delta", "cmd/auto/cooling_delta", "0.1", "5", "0.1", "°C");
+    publishNumberDiscovery("heating_start_delta", "Heating start delta", "climate_controller_heating_start_delta", "state/auto/heating_delta", "cmd/auto/heating_delta", "0.1", "5", "0.1", "°C");
 
     publishSwitchDiscovery("vfd_polling_enabled", "VFD polling enabled", "climate_controller_vfd_polling_enabled", "state/system/vfd_polling_enabled", "cmd/system/vfd_polling_enabled");
     publishSwitchDiscovery("auto_save_enabled", "Auto save enabled", "climate_controller_auto_save_enabled", "state/system/auto_save_enabled", "cmd/system/auto_save_enabled");
     publishBinarySensorDiscovery("ha_connected", "Home Assistant connected", "climate_controller_ha_connected", "state/system/ha_connected", "connectivity");
+    publishBinarySensorDiscovery("io_expander_ready", "IO expander ready", "climate_controller_io_expander_ready", "state/system/io_expander_ready", "connectivity");
+    publishSensorDiscovery("io_expander_state", "IO expander state", "climate_controller_io_expander_state", "state/system/io_expander");
+    publishSensorDiscovery("io_expander_errors", "IO expander errors", "climate_controller_io_expander_errors", "state/system/io_expander_errors", nullptr, nullptr, "total_increasing");
+    publishSensorDiscovery("io_expander_consecutive_errors", "IO expander consecutive errors", "climate_controller_io_expander_consecutive_errors", "state/system/io_expander_consecutive_errors");
     publishSensorDiscovery("ha_publish_count", "HA publish count", "climate_controller_ha_publish_count", "state/system/ha_publish_count", nullptr, nullptr, "total_increasing");
     publishSensorDiscovery("ha_command_count", "HA command count", "climate_controller_ha_command_count", "state/system/ha_command_count", nullptr, nullptr, "total_increasing");
     publishSensorDiscovery("ha_reconnect_count", "HA reconnect count", "climate_controller_ha_reconnect_count", "state/system/ha_reconnect_count", nullptr, nullptr, "total_increasing");

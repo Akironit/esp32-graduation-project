@@ -51,6 +51,7 @@ enum class DiagnosticCode : uint8_t {
     HomeAssistantDisconnected,
     UnassignedTemperatureSensorsDetected,
     AutoSafeModeActive,
+    IoExpanderUnavailable,
     SettingsInvalid
 };
 
@@ -119,6 +120,10 @@ struct VfdStateSnapshot {
 
 struct InputStateSnapshot {
     bool ioExpanderReady = false;
+    bool ioExpanderCommunicationError = false;
+    uint8_t ioExpanderConsecutiveErrorCount = 0;
+    uint32_t ioExpanderErrorCount = 0;
+    unsigned long lastIoExpanderOkAgeMs = 0;
     bool buttonBackPressed = false;
     bool buttonLeftPressed = false;
     bool buttonRightPressed = false;

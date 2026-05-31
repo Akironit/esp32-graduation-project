@@ -73,6 +73,9 @@ private:
     void configureIoExpanderInputs();
     void updateIoExpanderInputs();
     void processIoExpanderPort();
+    void markIoExpanderOk();
+    void markIoExpanderReadError(const char* reason);
+    void applyKitchenHoodLevelIfDue(unsigned long now, bool force = false);
     void handleIoExpanderInputChange(uint8_t pin, int currentState);
     void handleButtonEvent(const char* name, ButtonInput::Event event);
     void loadUserSettings();
@@ -125,20 +128,31 @@ private:
     ClimateAlgorithm climateAlgorithm;
     Preferences preferences;
     bool ioExpanderReady = false;
+    bool ioExpanderCommunicationError = false;
+    bool mcpInterruptsAttached = false;
+    uint8_t ioExpanderConsecutiveErrorCount = 0;
+    uint32_t ioExpanderErrorCount = 0;
+    unsigned long lastIoExpanderOkMs = 0;
+    unsigned long lastMcpFallbackPollMs = 0;
+    unsigned long lastMcpHealthCheckMs = 0;
+    unsigned long lastMcpRecoveryAttemptMs = 0;
     int lastGpa5State = HIGH;
     int lastGpa6State = HIGH;
     int lastGpa7State = HIGH;
     int lastExhaustVentState = HIGH;
     uint8_t rawHoodLevel = 0;
     uint8_t stableHoodLevel = 0;
+    uint8_t appliedHoodLevel = 0;
     unsigned long rawHoodChangedMs = 0;
+    unsigned long stableHoodChangedMs = 0;
+    bool hoodApplyPending = false;
     bool hoodDebounceActive = false;
     ButtonInput buttonBack;
     ButtonInput buttonLeft;
     ButtonInput buttonRight;
     ButtonInput buttonOk;
     bool buttonsActive = false;
-    unsigned long lastButtonPollMs = 0;
+    unsigned long lastInputPollMs = 0;
     uint32_t lastUptimeSecond = UINT32_MAX;
     unsigned long lastVfdStatusPollMs = 0;
     unsigned long lastVfdCommandSyncMs = 0;
@@ -170,6 +184,8 @@ private:
     int16_t lastLoggedVfdActualFreq10 = INT16_MIN;
     bool lastLoggedVfdOnline = false;
     bool lastLoggedVfdError = false;
+    bool haIndoorTempDiscoveryRepublished = false;
+    bool haOutdoorTempDiscoveryRepublished = false;
     NetworkManager network{
         WIFI_SSID,
         WIFI_PASSWORD,

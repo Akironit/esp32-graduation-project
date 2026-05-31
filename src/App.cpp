@@ -412,6 +412,18 @@ void App::updateDeviceState() {
     }
     state.environment.hasIndoorTemp = tempSensors.getTemperatureByRole(TempSensorRole::Indoor, state.environment.indoorTempC);
     state.environment.hasOutdoorTemp = tempSensors.getTemperatureByRole(TempSensorRole::Outdoor, state.environment.outdoorTempC);
+    bool republishTemperatureDiscovery = false;
+    if (state.environment.hasIndoorTemp && !haIndoorTempDiscoveryRepublished && homeAssistant.hasPublished()) {
+        haIndoorTempDiscoveryRepublished = true;
+        republishTemperatureDiscovery = true;
+    }
+    if (state.environment.hasOutdoorTemp && !haOutdoorTempDiscoveryRepublished && homeAssistant.hasPublished()) {
+        haOutdoorTempDiscoveryRepublished = true;
+        republishTemperatureDiscovery = true;
+    }
+    if (republishTemperatureDiscovery) {
+        homeAssistant.forceDiscoveryRepublish();
+    }
     if (state.environment.hasIndoorTemp) {
         const uint8_t indoorControllerTemp = (uint8_t)constrain((int)(state.environment.indoorTempC + 0.5f), 0, 63);
         hp.setControllerTempOverride(true, indoorControllerTemp);
@@ -466,6 +478,10 @@ void App::updateDeviceState() {
     state.ventilation.reason[sizeof(state.ventilation.reason) - 1] = '\0';
 
     state.input.ioExpanderReady = ioExpanderReady;
+    state.input.ioExpanderCommunicationError = ioExpanderCommunicationError;
+    state.input.ioExpanderConsecutiveErrorCount = ioExpanderConsecutiveErrorCount;
+    state.input.ioExpanderErrorCount = ioExpanderErrorCount;
+    state.input.lastIoExpanderOkAgeMs = lastIoExpanderOkMs > 0 ? millis() - lastIoExpanderOkMs : 0;
     state.input.buttonBackPressed = buttonBack.isPressed();
     state.input.buttonLeftPressed = buttonLeft.isPressed();
     state.input.buttonRightPressed = buttonRight.isPressed();
@@ -568,6 +584,21 @@ void App::updateDiagnostics(const AutoControlStatus& autoStatus, const AutoContr
         add(DiagnosticSeverity::Warning, DiagnosticCode::VfdCommunicationUnstable, "VFD LINK UNSTABLE", details, "Check RS485 timing/wiring");
     }
 
+    if (!state.input.ioExpanderReady || state.input.ioExpanderCommunicationError) {
+        if (!state.input.ioExpanderReady) {
+            snprintf(details, sizeof(details), "not initialized total=%lu", (unsigned long)state.input.ioExpanderErrorCount);
+        } else {
+            snprintf(
+                details,
+                sizeof(details),
+                "fails=%u total=%lu",
+                state.input.ioExpanderConsecutiveErrorCount,
+                (unsigned long)state.input.ioExpanderErrorCount
+            );
+        }
+        add(DiagnosticSeverity::Error, DiagnosticCode::IoExpanderUnavailable, "MCP23017 UNAVAILABLE", details, "Check I2C / MCP23017 power");
+    }
+
     if (state.controllerState.mode == DeviceMode::Safe) {
         add(DiagnosticSeverity::Error, DiagnosticCode::AutoSafeModeActive, "AUTO SAFE ACTIVE", autoStatus.reason, "Fix critical input data");
     }
@@ -600,6 +631,12 @@ void App::configureIoExpanderInputs() {
     ioExpanderReady = ioExpander.begin(Wire, MCP23017_ADDRESS, I2C_SDA_PIN, I2C_SCL_PIN);
 
     if (!ioExpanderReady) {
+        ioExpanderCommunicationError = true;
+        if (ioExpanderConsecutiveErrorCount < UINT8_MAX) {
+            ioExpanderConsecutiveErrorCount++;
+        }
+        ioExpanderErrorCount++;
+        lastMcpRecoveryAttemptMs = millis();
         return;
     }
 
@@ -622,10 +659,18 @@ void App::configureIoExpanderInputs() {
     ioExpander.enableInterruptOnChange(MCP_BUTTON_OK_PIN);
     ioExpander.clearInterrupts();
 
-    lastGpa5State = ioExpander.digitalRead(MCP_PIN_GPA5);
-    lastGpa6State = ioExpander.digitalRead(MCP_PIN_GPA6);
-    lastGpa7State = ioExpander.digitalRead(MCP_PIN_GPA7);
-    lastExhaustVentState = ioExpander.digitalRead(MCP_PIN_EXHAUST_VENT);
+    uint16_t portState = 0;
+    if (!ioExpander.readPort(portState)) {
+        markIoExpanderReadError("initial read");
+        return;
+    }
+
+    markIoExpanderOk();
+
+    lastGpa5State = (portState & (1 << MCP_PIN_GPA5)) ? HIGH : LOW;
+    lastGpa6State = (portState & (1 << MCP_PIN_GPA6)) ? HIGH : LOW;
+    lastGpa7State = (portState & (1 << MCP_PIN_GPA7)) ? HIGH : LOW;
+    lastExhaustVentState = (portState & (1 << MCP_PIN_EXHAUST_VENT)) ? HIGH : LOW;
     rawHoodLevel = 0;
     if (lastGpa5State == LOW) {
         rawHoodLevel = 1;
@@ -637,12 +682,15 @@ void App::configureIoExpanderInputs() {
         rawHoodLevel = 3;
     }
     stableHoodLevel = rawHoodLevel;
+    appliedHoodLevel = stableHoodLevel;
     rawHoodChangedMs = millis();
+    stableHoodChangedMs = rawHoodChangedMs;
+    hoodApplyPending = false;
     hoodDebounceActive = false;
     rawExhaustVentState = lastExhaustVentState;
     rawExhaustVentChangedMs = millis();
     exhaustDebounceActive = false;
-    updateVentilationInputs(stableHoodLevel, lastExhaustVentState);
+    updateVentilationInputs(appliedHoodLevel, lastExhaustVentState);
     buttonBack.begin(true, 50, 500);
     buttonLeft.begin(true, 50, 500);
     buttonRight.begin(true, 50, 500);
@@ -650,28 +698,58 @@ void App::configureIoExpanderInputs() {
 
     pinMode(MCP_INT_A_PIN, INPUT);
     pinMode(MCP_INT_B_PIN, INPUT);
-    attachInterrupt(digitalPinToInterrupt(MCP_INT_A_PIN), handleMcpInterruptA, FALLING);
-    attachInterrupt(digitalPinToInterrupt(MCP_INT_B_PIN), handleMcpInterruptB, FALLING);
+    if (!mcpInterruptsAttached) {
+        attachInterrupt(digitalPinToInterrupt(MCP_INT_A_PIN), handleMcpInterruptA, FALLING);
+        attachInterrupt(digitalPinToInterrupt(MCP_INT_B_PIN), handleMcpInterruptB, FALLING);
+        mcpInterruptsAttached = true;
+    }
 
     Logger::info(TAG_INPUT, "GPA0-GPA3 buttons and GPA4-GPA7 ventilation inputs started");
 }
 
 
 void App::updateIoExpanderInputs() {
-    if (!ioExpanderReady) {
-        return;
-    }
-
     const unsigned long now = millis();
-    const bool pollButtons = (buttonsActive || exhaustDebounceActive)
-        && now - lastButtonPollMs >= AppConfig::BUTTON_POLL_INTERVAL_MS;
+    applyKitchenHoodLevelIfDue(now);
 
-    if (!mcpInterruptA && !mcpInterruptB && !pollButtons) {
+    if (!ioExpanderReady) {
+        if (now - lastMcpRecoveryAttemptMs >= AppConfig::MCP_RECOVERY_RETRY_INTERVAL_MS) {
+            Logger::debug(TAG_INPUT, "Retrying MCP23017 initialization");
+            configureIoExpanderInputs();
+        }
         return;
     }
 
-    if (pollButtons) {
-        lastButtonPollMs = now;
+    if (now - lastMcpHealthCheckMs >= AppConfig::MCP_HEALTH_CHECK_INTERVAL_MS) {
+        lastMcpHealthCheckMs = now;
+        if (!ioExpander.isConnected()) {
+            markIoExpanderReadError("health check");
+        } else if (!ioExpanderCommunicationError) {
+            markIoExpanderOk();
+        }
+    }
+
+    if (ioExpanderCommunicationError) {
+        if (now - lastMcpRecoveryAttemptMs >= AppConfig::MCP_RECOVERY_RETRY_INTERVAL_MS) {
+            Logger::debug(TAG_INPUT, "Retrying MCP23017 recovery");
+            configureIoExpanderInputs();
+        }
+        return;
+    }
+
+    const bool pollInputs = (buttonsActive || exhaustDebounceActive || hoodDebounceActive)
+        && now - lastInputPollMs >= AppConfig::BUTTON_POLL_INTERVAL_MS;
+    const bool fallbackPoll = now - lastMcpFallbackPollMs >= AppConfig::MCP_FALLBACK_POLL_INTERVAL_MS;
+
+    if (!mcpInterruptA && !mcpInterruptB && !pollInputs && !fallbackPoll) {
+        return;
+    }
+
+    if (pollInputs) {
+        lastInputPollMs = now;
+    }
+    if (fallbackPoll) {
+        lastMcpFallbackPollMs = now;
     }
 
     noInterrupts();
@@ -683,10 +761,10 @@ void App::updateIoExpanderInputs() {
 
     if (interruptA || interruptB) {
         buttonsActive = true;
-        lastButtonPollMs = now;
+        lastInputPollMs = now;
     }
 
-    if (interruptA || interruptB || pollButtons) {
+    if (interruptA || interruptB || pollInputs || fallbackPoll) {
         processIoExpanderPort();
     }
 }
@@ -696,9 +774,10 @@ void App::processIoExpanderPort() {
     uint16_t portState = 0;
 
     if (!ioExpander.readPort(portState)) {
-        Logger::warning(TAG_INPUT, "Failed to read MCP23017 port after interrupt");
+        markIoExpanderReadError("readPort");
         return;
     }
+    markIoExpanderOk();
 
     const int gpa5State = (portState & (1 << MCP_PIN_GPA5)) ? HIGH : LOW;
     const int gpa6State = (portState & (1 << MCP_PIN_GPA6)) ? HIGH : LOW;
@@ -757,11 +836,14 @@ void App::processIoExpanderPort() {
         hoodDebounceActive = false;
         if (rawHoodLevel != stableHoodLevel) {
             stableHoodLevel = rawHoodLevel;
-            Logger::infof(TAG_INPUT, "Kitchen hood level confirmed: %u", stableHoodLevel);
+            stableHoodChangedMs = now;
+            hoodApplyPending = true;
+            Logger::debugf(TAG_INPUT, "Kitchen hood level stable: %u", stableHoodLevel);
         }
     }
 
-    updateVentilationInputs(stableHoodLevel, lastExhaustVentState);
+    applyKitchenHoodLevelIfDue(now);
+    updateVentilationInputs(appliedHoodLevel, lastExhaustVentState);
 
     const bool backPressed = (portState & (1 << MCP_BUTTON_BACK_PIN)) == 0;
     const bool leftPressed = (portState & (1 << MCP_BUTTON_LEFT_PIN)) == 0;
@@ -781,6 +863,69 @@ void App::processIoExpanderPort() {
         || buttonLeft.isActive()
         || buttonRight.isActive()
         || buttonOk.isActive();
+}
+
+
+void App::markIoExpanderOk() {
+    const bool recovered = ioExpanderCommunicationError;
+    ioExpanderConsecutiveErrorCount = 0;
+    ioExpanderCommunicationError = false;
+    ioExpanderReady = true;
+    lastIoExpanderOkMs = millis();
+    if (recovered) {
+        Logger::info(TAG_INPUT, "MCP23017 recovered");
+    }
+}
+
+
+void App::markIoExpanderReadError(const char* reason) {
+    if (ioExpanderConsecutiveErrorCount < UINT8_MAX) {
+        ioExpanderConsecutiveErrorCount++;
+    }
+    ioExpanderErrorCount++;
+    Logger::debugf(
+        TAG_INPUT,
+        "MCP23017 read failed: %s consecutive=%u total=%lu",
+        reason,
+        ioExpanderConsecutiveErrorCount,
+        (unsigned long)ioExpanderErrorCount
+    );
+
+    if (ioExpanderConsecutiveErrorCount >= AppConfig::MCP_ERROR_LIMIT && !ioExpanderCommunicationError) {
+        ioExpanderCommunicationError = true;
+        ioExpanderReady = false;
+        Logger::errorf(
+            TAG_INPUT,
+            "MCP23017 communication error: %s consecutive=%u total=%lu",
+            reason,
+            ioExpanderConsecutiveErrorCount,
+            (unsigned long)ioExpanderErrorCount
+        );
+    }
+}
+
+
+void App::applyKitchenHoodLevelIfDue(unsigned long now, bool force) {
+    if (stableHoodLevel > 3) {
+        stableHoodLevel = 3;
+    }
+
+    if (!force && !hoodApplyPending) {
+        return;
+    }
+
+    const uint32_t intervalSec = max<uint32_t>(1UL, climateAlgorithm.getSettings().ventCompensationUpdateIntervalSec);
+    const unsigned long intervalMs = intervalSec * 1000UL;
+    if (!force && now - stableHoodChangedMs < intervalMs) {
+        return;
+    }
+
+    if (appliedHoodLevel != stableHoodLevel) {
+        appliedHoodLevel = stableHoodLevel;
+        Logger::infof(TAG_INPUT, "Kitchen hood level confirmed: %u", appliedHoodLevel);
+        updateVentilationInputs(appliedHoodLevel, lastExhaustVentState);
+    }
+    hoodApplyPending = false;
 }
 
 

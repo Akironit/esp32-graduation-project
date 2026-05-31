@@ -19,6 +19,10 @@ constexpr unsigned long VFD_DUPLICATE_WRITE_SUPPRESS_MS = 10000;
 
 constexpr unsigned long EXHAUST_INPUT_DEBOUNCE_MS = 500;
 constexpr unsigned long HOOD_INPUT_DEBOUNCE_MS = 500;
+constexpr unsigned long MCP_FALLBACK_POLL_INTERVAL_MS = 2000;
+constexpr unsigned long MCP_HEALTH_CHECK_INTERVAL_MS = 5000;
+constexpr unsigned long MCP_RECOVERY_RETRY_INTERVAL_MS = 10000;
+constexpr uint8_t MCP_ERROR_LIMIT = 3;
 
 constexpr unsigned long USER_SETTINGS_SAVE_DELAY_MS = 2000;
 constexpr const char* USER_SETTINGS_NAMESPACE = "climate";
