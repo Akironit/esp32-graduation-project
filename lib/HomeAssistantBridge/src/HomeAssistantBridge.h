@@ -84,6 +84,7 @@ public:
     uint32_t getCommandCount() const;
     bool hasPublished() const;
     unsigned long getLastPublishAgeMs() const;
+    void forceDiscoveryRepublish();
 
 private:
     WiFiClient wifiClient;

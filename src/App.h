@@ -81,10 +81,11 @@ private:
     void saveUserSettings();
     void updateModeTransition();
     void applyManualSettingsProfile(const char* reason);
-    void updateVentilationInputs(int gpa5State, int gpa6State, int gpa7State, int exhaustState);
+    void updateVentilationInputs(uint8_t hoodLevel, int exhaustState);
     void startVfdFastVerify();
     void requestVfdCommandSync(const char* reason);
     void requestVfdCommandSync(const char* reason, uint16_t address, uint16_t value, bool desiredPower, uint8_t desiredStep, float desiredHz);
+    void syncManualVfdEffectiveTarget();
     bool sendPendingVfdCommand(const char* source);
     bool isPendingVfdStatusVerified() const;
     bool isVfdDesiredStateReached() const;
@@ -93,6 +94,17 @@ private:
     static bool handleHomeAssistantVfdSync(void* context, const char* reason);
     static void handleHomeAssistantSettingsChanged(void* context);
     static void handleHomeAssistantReboot(void* context);
+
+    struct VfdEffectiveTarget {
+        bool manualVentAssistEnabled = false;
+        bool userPower = false;
+        uint8_t userStep = 0;
+        uint8_t ventStep = 0;
+        uint8_t effectiveStep = 0;
+        bool effectivePower = false;
+        float effectiveHz = 0.0f;
+    };
+    VfdEffectiveTarget getManualVfdEffectiveTarget() const;
 
     enum class VfdSyncState : uint8_t {
         Idle,
@@ -117,6 +129,10 @@ private:
     int lastGpa6State = HIGH;
     int lastGpa7State = HIGH;
     int lastExhaustVentState = HIGH;
+    uint8_t rawHoodLevel = 0;
+    uint8_t stableHoodLevel = 0;
+    unsigned long rawHoodChangedMs = 0;
+    bool hoodDebounceActive = false;
     ButtonInput buttonBack;
     ButtonInput buttonLeft;
     ButtonInput buttonRight;

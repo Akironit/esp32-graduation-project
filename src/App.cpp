@@ -167,6 +167,7 @@ void App::update() {
     updateDeviceState();
     updateModeTransition();
     climateAlgorithm.update();
+    syncManualVfdEffectiveTarget();
     vfd.update();
     updateDeviceState();
     display.update(state, climateAlgorithm.getSettings());
@@ -625,10 +626,23 @@ void App::configureIoExpanderInputs() {
     lastGpa6State = ioExpander.digitalRead(MCP_PIN_GPA6);
     lastGpa7State = ioExpander.digitalRead(MCP_PIN_GPA7);
     lastExhaustVentState = ioExpander.digitalRead(MCP_PIN_EXHAUST_VENT);
+    rawHoodLevel = 0;
+    if (lastGpa5State == LOW) {
+        rawHoodLevel = 1;
+    }
+    if (lastGpa6State == LOW) {
+        rawHoodLevel = 2;
+    }
+    if (lastGpa7State == LOW) {
+        rawHoodLevel = 3;
+    }
+    stableHoodLevel = rawHoodLevel;
+    rawHoodChangedMs = millis();
+    hoodDebounceActive = false;
     rawExhaustVentState = lastExhaustVentState;
     rawExhaustVentChangedMs = millis();
     exhaustDebounceActive = false;
-    updateVentilationInputs(lastGpa5State, lastGpa6State, lastGpa7State, lastExhaustVentState);
+    updateVentilationInputs(stableHoodLevel, lastExhaustVentState);
     buttonBack.begin(true, 50, 500);
     buttonLeft.begin(true, 50, 500);
     buttonRight.begin(true, 50, 500);
@@ -691,6 +705,16 @@ void App::processIoExpanderPort() {
     const int gpa7State = (portState & (1 << MCP_PIN_GPA7)) ? HIGH : LOW;
     const int exhaustVentState = (portState & (1 << MCP_PIN_EXHAUST_VENT)) ? HIGH : LOW;
     const unsigned long now = millis();
+    uint8_t currentRawHoodLevel = 0;
+    if (gpa5State == LOW) {
+        currentRawHoodLevel = 1;
+    }
+    if (gpa6State == LOW) {
+        currentRawHoodLevel = 2;
+    }
+    if (gpa7State == LOW) {
+        currentRawHoodLevel = 3;
+    }
 
     if (gpa5State != lastGpa5State) {
         lastGpa5State = gpa5State;
@@ -714,6 +738,13 @@ void App::processIoExpanderPort() {
         Logger::debugf(TAG_INPUT, "Raw bathroom exhaust input: %s", exhaustVentState == LOW ? "ON" : "OFF");
     }
 
+    if (currentRawHoodLevel != rawHoodLevel) {
+        rawHoodLevel = currentRawHoodLevel;
+        rawHoodChangedMs = now;
+        hoodDebounceActive = true;
+        Logger::debugf(TAG_INPUT, "Raw kitchen hood level: %u", rawHoodLevel);
+    }
+
     if (exhaustDebounceActive && now - rawExhaustVentChangedMs >= AppConfig::EXHAUST_INPUT_DEBOUNCE_MS) {
         exhaustDebounceActive = false;
         if (rawExhaustVentState != lastExhaustVentState) {
@@ -722,7 +753,15 @@ void App::processIoExpanderPort() {
         }
     }
 
-    updateVentilationInputs(gpa5State, gpa6State, gpa7State, lastExhaustVentState);
+    if (hoodDebounceActive && now - rawHoodChangedMs >= AppConfig::HOOD_INPUT_DEBOUNCE_MS) {
+        hoodDebounceActive = false;
+        if (rawHoodLevel != stableHoodLevel) {
+            stableHoodLevel = rawHoodLevel;
+            Logger::infof(TAG_INPUT, "Kitchen hood level confirmed: %u", stableHoodLevel);
+        }
+    }
+
+    updateVentilationInputs(stableHoodLevel, lastExhaustVentState);
 
     const bool backPressed = (portState & (1 << MCP_BUTTON_BACK_PIN)) == 0;
     const bool leftPressed = (portState & (1 << MCP_BUTTON_LEFT_PIN)) == 0;
@@ -813,29 +852,37 @@ void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
             break;
         case DisplayUi::ActionType::AutoSettings:
             climateAlgorithm.setSettings(action.autoSettings);
+            if (state.controllerState.mode == DeviceMode::Manual) {
+                requestVfdCommandSync("display auto settings");
+            }
             break;
         case DisplayUi::ActionType::TempAssignRole:
             if (!tempSensors.assignRole(action.uintValue, action.tempRole)) {
                 Logger::warningf(TAG_SETTINGS, "Temperature role assign failed: index=%u", action.uintValue);
             }
+            homeAssistant.forceDiscoveryRepublish();
             break;
         case DisplayUi::ActionType::TempForget:
             if (!tempSensors.forget(action.uintValue)) {
                 Logger::warningf(TAG_SETTINGS, "Temperature sensor forget failed: index=%u", action.uintValue);
             }
+            homeAssistant.forceDiscoveryRepublish();
             break;
         case DisplayUi::ActionType::TempForceRead:
             tempSensors.forceRead();
             Logger::info(TAG_SETTINGS, "Temperature force read requested");
+            homeAssistant.forceDiscoveryRepublish();
             break;
         case DisplayUi::ActionType::TempScan:
             tempSensors.rescan();
             Logger::info(TAG_SETTINGS, "Temperature bus scan requested");
+            homeAssistant.forceDiscoveryRepublish();
             break;
         case DisplayUi::ActionType::TempSwap:
             if (!tempSensors.swapRoles()) {
                 Logger::warning(TAG_SETTINGS, "Temperature role swap failed");
             }
+            homeAssistant.forceDiscoveryRepublish();
             break;
         case DisplayUi::ActionType::SystemSettings:
             network.setEnabled(state.settings.wifiEnabled);
@@ -859,44 +906,77 @@ void App::handleButtonEvent(const char* name, ButtonInput::Event event) {
 
 
 void App::requestVfdCommandSync(const char* reason) {
-    const AutoControlSettings autoSettings = climateAlgorithm.getSettings();
-    const bool manualVentAssistEnabled = state.controllerState.mode == DeviceMode::Manual
-        && autoSettings.manualVentCompensationEnabled;
-    const uint8_t userStep = state.settings.manualVfdPower
-        ? (state.settings.manualVfdStep > 6 ? 6 : state.settings.manualVfdStep)
-        : 0;
-    const uint8_t ventAssistStep = manualVentAssistEnabled
-        ? state.ventilation.requestedStepAfterLimit
-        : 0;
-    const uint8_t effectiveStep = max(userStep, ventAssistStep);
-    const bool effectivePower = effectiveStep > 0;
+    if (vfdSyncState != VfdSyncState::Idle) {
+        Logger::tracef(TAG_VFD_UI, "VFD sync skipped while previous command is active: %s", reason);
+        return;
+    }
 
-    if (!effectivePower) {
+    const VfdEffectiveTarget target = getManualVfdEffectiveTarget();
+
+    if (!state.vfd.initialized || state.vfd.communicationError) {
+        Logger::debugf(
+            TAG_VFD_UI,
+            "VFD sync deferred while link is unavailable: %s effectiveStep=%u userStep=%u ventStep=%u error=%u",
+            reason,
+            target.effectiveStep,
+            target.userStep,
+            target.ventStep,
+            state.vfd.communicationError ? 1 : 0
+        );
+        return;
+    }
+
+    if (!target.effectivePower) {
         requestVfdCommandSync(reason, 0x2000, 0x0005, false, 0, 0.0f);
         return;
     }
 
-    const float desiredHz = vfdStepToHz(effectiveStep);
-    const uint16_t desiredValue = (uint16_t)lroundf(desiredHz * 100.0f);
+    const uint16_t desiredValue = (uint16_t)lroundf(target.effectiveHz * 100.0f);
     const bool requestedFrequencyMatches = vfd.hasRequestedFrequency()
-        && fabsf(vfd.getRequestedFrequencyHz() - desiredHz) <= 0.5f;
+        && fabsf(vfd.getRequestedFrequencyHz() - target.effectiveHz) <= 0.5f;
 
     if (!requestedFrequencyMatches) {
-        requestVfdCommandSync(reason, 0x2001, desiredValue, true, effectiveStep, desiredHz);
+        requestVfdCommandSync(reason, 0x2001, desiredValue, true, target.effectiveStep, target.effectiveHz);
         return;
     }
 
     if (!vfd.isRunning()) {
-        requestVfdCommandSync(reason, 0x2000, 0x0001, true, effectiveStep, desiredHz);
+        requestVfdCommandSync(reason, 0x2000, 0x0001, true, target.effectiveStep, target.effectiveHz);
         return;
     }
 
-    if (vfd.hasActualFrequency() && fabsf(vfd.getActualFrequencyHz() - desiredHz) > 0.75f) {
-        requestVfdCommandSync(reason, 0x2001, desiredValue, true, effectiveStep, desiredHz);
+    if (vfd.hasActualFrequency() && fabsf(vfd.getActualFrequencyHz() - target.effectiveHz) > 0.75f) {
+        requestVfdCommandSync(reason, 0x2001, desiredValue, true, target.effectiveStep, target.effectiveHz);
         return;
     }
 
     Logger::tracef(TAG_VFD_UI, "VFD sync not needed: %s", reason);
+}
+
+
+void App::syncManualVfdEffectiveTarget() {
+    const AutoControlSettings autoSettings = climateAlgorithm.getSettings();
+    if (state.controllerState.mode != DeviceMode::Manual || !autoSettings.manualVentCompensationEnabled) {
+        return;
+    }
+    if (vfdSyncState != VfdSyncState::Idle) {
+        return;
+    }
+    if (state.vfd.communicationError || !state.vfd.initialized) {
+        const VfdEffectiveTarget target = getManualVfdEffectiveTarget();
+        Logger::tracef(
+            TAG_VFD_UI,
+            "Manual effective VFD target held while link is unavailable: user=%u vent=%u effective=%u",
+            target.userStep,
+            target.ventStep,
+            target.effectiveStep
+        );
+        return;
+    }
+    if (isVfdDesiredStateReached()) {
+        return;
+    }
+    requestVfdCommandSync("manual vent effective target");
 }
 
 
@@ -1042,30 +1122,39 @@ bool App::isPendingVfdStatusVerified() const {
 
 
 bool App::isVfdDesiredStateReached() const {
-    const AutoControlSettings autoSettings = climateAlgorithm.getSettings();
-    const bool manualVentAssistEnabled = state.controllerState.mode == DeviceMode::Manual
-        && autoSettings.manualVentCompensationEnabled;
-    const uint8_t userStep = state.settings.manualVfdPower
-        ? (state.settings.manualVfdStep > 6 ? 6 : state.settings.manualVfdStep)
-        : 0;
-    const uint8_t ventAssistStep = manualVentAssistEnabled
-        ? state.ventilation.requestedStepAfterLimit
-        : 0;
-    const uint8_t effectiveStep = max(userStep, ventAssistStep);
+    if (state.vfd.communicationError || !state.vfd.initialized) {
+        return true;
+    }
+    const VfdEffectiveTarget target = getManualVfdEffectiveTarget();
 
-    if (effectiveStep == 0) {
-        if (!state.settings.manualVfdPower && ventAssistStep == 0) {
-            return !vfd.isRunning() && (!vfd.hasActualFrequency() || vfd.getActualFrequencyHz() < 1.0f);
-        }
-
-        return vfd.isRunning();
+    if (target.effectiveStep == 0) {
+        return !vfd.isRunning() && (!vfd.hasActualFrequency() || vfd.getActualFrequencyHz() < 1.0f);
     }
 
-    const float desiredHz = vfdStepToHz(effectiveStep);
     return vfd.isRunning()
         && vfd.hasActualFrequency()
-        && fabsf(vfd.getActualFrequencyHz() - desiredHz) <= 0.75f
-        && vfd.getActualStep() == effectiveStep;
+        && fabsf(vfd.getActualFrequencyHz() - target.effectiveHz) <= 0.75f
+        && vfd.getActualStep() == target.effectiveStep;
+}
+
+
+App::VfdEffectiveTarget App::getManualVfdEffectiveTarget() const {
+    VfdEffectiveTarget target;
+    const AutoControlSettings autoSettings = climateAlgorithm.getSettings();
+    target.manualVentAssistEnabled = state.controllerState.mode == DeviceMode::Manual
+        && autoSettings.manualVentCompensationEnabled;
+    target.userPower = state.settings.manualVfdPower;
+    target.userStep = state.settings.manualVfdPower
+        ? (state.settings.manualVfdStep > 6 ? 6 : state.settings.manualVfdStep)
+        : 0;
+    const AutoControlStatus autoStatus = climateAlgorithm.getStatus();
+    target.ventStep = target.manualVentAssistEnabled
+        ? autoStatus.requestedVentStepAfterLimit
+        : 0;
+    target.effectiveStep = max(target.userStep, target.ventStep);
+    target.effectivePower = target.effectiveStep > 0;
+    target.effectiveHz = vfdStepToHz(target.effectiveStep);
+    return target;
 }
 
 
@@ -1120,18 +1209,10 @@ void App::logVfdStateChanges() {
 }
 
 
-void App::updateVentilationInputs(int gpa5State, int gpa6State, int gpa7State, int exhaustState) {
-    uint8_t hoodLevel = 0;
-    if (gpa5State == LOW) {
-        hoodLevel = 1;
-    }
-    if (gpa6State == LOW) {
-        hoodLevel = 2;
-    }
-    if (gpa7State == LOW) {
+void App::updateVentilationInputs(uint8_t hoodLevel, int exhaustState) {
+    if (hoodLevel > 3) {
         hoodLevel = 3;
     }
-
     const bool exhaustEnabled = exhaustState == LOW;
 
     if (state.environment.kitchenHoodLevel != hoodLevel) {

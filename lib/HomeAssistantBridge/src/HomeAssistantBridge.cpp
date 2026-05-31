@@ -186,6 +186,15 @@ unsigned long HomeAssistantBridge::getLastPublishAgeMs() const {
     return millis() - lastPublishMs;
 }
 
+void HomeAssistantBridge::forceDiscoveryRepublish() {
+    discoveryPublished = false;
+    if (!mqttClient.connected()) {
+        return;
+    }
+    publishDiscovery();
+    publishState();
+}
+
 void HomeAssistantBridge::reconnect() {
     Logger::infof(TAG_HA, "Connecting to MQTT broker... retry interval=%lu ms", reconnectIntervalMs);
 
@@ -286,18 +295,18 @@ void HomeAssistantBridge::publishState() {
     if (state->environment.hasIndoorTemp) {
         publishTopicf("state/temp/indoor", "%.2f", state->environment.indoorTempC);
     } else {
-        publishTopic("state/temp/indoor", "", true);
+        publishTopic("state/temp/indoor", "unknown", true);
     }
     if (state->environment.hasOutdoorTemp) {
         publishTopicf("state/temp/outdoor", "%.2f", state->environment.outdoorTempC);
     } else {
-        publishTopic("state/temp/outdoor", "", true);
+        publishTopic("state/temp/outdoor", "unknown", true);
     }
     publishTopicf("state/temp/target", "%.1f", state->environment.targetIndoorTempC);
     if (state->environment.hasIndoorTemp) {
         publishTopicf("state/temp/delta", "%.2f", state->environment.indoorTempC - state->environment.targetIndoorTempC);
     } else {
-        publishTopic("state/temp/delta", "", true);
+        publishTopic("state/temp/delta", "unknown", true);
     }
 
     publishTopicf("state/temp/count", "%u", state->temperatures.sensorCount);
@@ -313,8 +322,15 @@ void HomeAssistantBridge::publishState() {
     publishTopic("state/vfd/link", state->vfd.communicationError ? "error" : ((state->vfd.everOnline || state->vfd.online) ? "linked" : "waiting"), true);
     publishTopic("state/vfd/run", state->vfd.statusWord == 0x0002 ? "rev" : (state->vfd.running ? "fwd" : "stop"), true);
     publishTopic("state/vfd/running", state->vfd.running ? "ON" : "OFF", true);
-    const bool desiredVfdPower = state->controllerState.mode == DeviceMode::Auto ? state->ventilation.desiredVfdPower : state->settings.manualVfdPower;
-    const uint8_t desiredVfdStep = state->controllerState.mode == DeviceMode::Auto ? state->ventilation.desiredVfdStep : state->settings.manualVfdStep;
+    const AutoControlSettings settings = climateAlgorithm != nullptr ? climateAlgorithm->getSettings() : AutoControlSettings{};
+    const bool manualVentAssist = state->controllerState.mode == DeviceMode::Manual && settings.manualVentCompensationEnabled;
+    const uint8_t manualVfdStep = state->settings.manualVfdPower ? min<uint8_t>(state->settings.manualVfdStep, 6) : 0;
+    const bool desiredVfdPower = state->controllerState.mode == DeviceMode::Auto
+        ? state->ventilation.desiredVfdPower
+        : (manualVentAssist ? max<uint8_t>(manualVfdStep, state->ventilation.requestedStepAfterLimit) > 0 : state->settings.manualVfdPower);
+    const uint8_t desiredVfdStep = state->controllerState.mode == DeviceMode::Auto
+        ? state->ventilation.desiredVfdStep
+        : (manualVentAssist ? max<uint8_t>(manualVfdStep, state->ventilation.requestedStepAfterLimit) : manualVfdStep);
     publishTopic("state/vfd/desired_power", desiredVfdPower ? "ON" : "OFF", true);
     publishTopicf("state/vfd/desired_step", "%u", desiredVfdStep);
     publishTopicf("state/vfd/status_word", "%u", state->vfd.statusWord);
@@ -339,7 +355,6 @@ void HomeAssistantBridge::publishState() {
     publishTopicf("state/vent/off_delay_remaining", "%lu", (unsigned long)state->ventilation.compensationOffDelayRemainingSec);
     publishTopic("state/vent/reason", state->ventilation.reason, true);
 
-    const AutoControlSettings settings = climateAlgorithm != nullptr ? climateAlgorithm->getSettings() : AutoControlSettings{};
     publishTopic("state/auto/enabled", settings.autoEnabled ? "ON" : "OFF", true);
     publishTopic("state/auto/dry_run", settings.dryRun ? "ON" : "OFF", true);
     publishTopic("state/auto/diagnostic_verbose", settings.diagnosticVerbose ? "ON" : "OFF", true);
@@ -1234,6 +1249,9 @@ bool HomeAssistantBridge::updateAutoSettings(const AutoControlSettings& settings
         return false;
     }
     climateAlgorithm->setSettings(settings);
+    if (state != nullptr && state->controllerState.mode == DeviceMode::Manual) {
+        syncVfd("ha auto settings");
+    }
     return true;
 }
 

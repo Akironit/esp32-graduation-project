@@ -892,7 +892,8 @@ void DisplayUi::drawOverview(const DeviceState& state) {
     if (state.controllerState.mode == DeviceMode::Auto) {
         desiredVfdPower = state.ventilation.desiredVfdPower;
     } else if (state.controllerState.mode == DeviceMode::Manual) {
-        desiredVfdPower = state.settings.manualVfdPower;
+        desiredVfdPower = state.settings.manualVfdPower
+            || (state.controllerState.activity == ControllerActivity::Vent && state.ventilation.requestedStepAfterLimit > 0);
     }
 
     if (interactionMode == InteractionMode::Edit) {

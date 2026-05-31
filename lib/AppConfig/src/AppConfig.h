@@ -18,6 +18,7 @@ constexpr uint8_t VFD_COMMAND_RETRY_LIMIT = 1;
 constexpr unsigned long VFD_DUPLICATE_WRITE_SUPPRESS_MS = 10000;
 
 constexpr unsigned long EXHAUST_INPUT_DEBOUNCE_MS = 500;
+constexpr unsigned long HOOD_INPUT_DEBOUNCE_MS = 500;
 
 constexpr unsigned long USER_SETTINGS_SAVE_DELAY_MS = 2000;
 constexpr const char* USER_SETTINGS_NAMESPACE = "climate";

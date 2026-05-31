@@ -86,7 +86,6 @@ void ClimateAlgorithm::update() {
             status.desiredVfdPower = manualStep > 0;
             status.desiredVfdHz = vfdStepToHz(manualStep);
             status.desiredAcPower = false;
-            applyDesiredState(false);
         }
         manualVentCompensationActive = false;
         state->controllerState.activity = ControllerActivity::Hold;
@@ -547,7 +546,7 @@ ControllerActivity ClimateAlgorithm::calculateActivity() {
             return ControllerActivity::AcCool;
         }
 
-        if ((status.bathExhaustOn || status.hoodLevel > 0) && status.vfdOnline) {
+        if (status.bathExhaustOn || status.hoodLevel > 0) {
             setReason("Cooling required but cooling equipment unavailable; exhaust compensation continues via VFD");
             return ControllerActivity::Vent;
         }
@@ -562,7 +561,7 @@ ControllerActivity ClimateAlgorithm::calculateActivity() {
             return ControllerActivity::Heat;
         }
 
-        if ((status.bathExhaustOn || status.hoodLevel > 0) && status.vfdOnline) {
+        if (status.bathExhaustOn || status.hoodLevel > 0) {
             setReason("Heating required but AC heating unavailable; exhaust compensation continues via VFD");
             return ControllerActivity::Vent;
         }
@@ -663,7 +662,6 @@ void ClimateAlgorithm::updateManualVentCompensation() {
             Logger::debug(TAG_AUTO, "Manual vent compensation active in MANUAL mode");
         }
         manualVentCompensationActive = true;
-        applyDesiredState(false);
         return;
     }
 
@@ -674,7 +672,6 @@ void ClimateAlgorithm::updateManualVentCompensation() {
 
     if (manualVentCompensationActive) {
         manualVentCompensationActive = false;
-        applyDesiredState(false);
     }
 }
 
@@ -722,9 +719,7 @@ void ClimateAlgorithm::updateVentRequirements(ControllerActivity activity) {
         : 0;
 
     if (activity == ControllerActivity::Error || activity == ControllerActivity::Idle) {
-        status.requestedVentStepBeforeLimit = status.vfdOnline && status.exhaustCompRequirementStep > 0
-            ? status.exhaustCompRequirementStep
-            : 0;
+        status.requestedVentStepBeforeLimit = status.exhaustCompRequirementStep;
     } else if (settings.additiveVentCompensation) {
         status.requestedVentStepBeforeLimit = max(
             clampStep(status.baseVentRequirementStep + status.exhaustCompRequirementStep),

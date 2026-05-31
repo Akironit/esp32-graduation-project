@@ -560,6 +560,16 @@ void VfdController::handleResponse() {
     const uint16_t receivedCrc = (uint16_t)rxBuffer[expectedResponseLen - 2] | ((uint16_t)rxBuffer[expectedResponseLen - 1] << 8);
     const uint16_t calculatedCrc = crc16Modbus(rxBuffer, expectedResponseLen - 2);
     if (receivedCrc != calculatedCrc) {
+        Logger::tracef(
+            TAG_VFD,
+            "CRC mismatch token=%lu received=0x%04X calculated=0x%04X len=%u expected=%u function=0x%02X",
+            (unsigned long)lastToken,
+            receivedCrc,
+            calculatedCrc,
+            (unsigned)rxLen,
+            (unsigned)expectedResponseLen,
+            expectedFunction
+        );
         recordTransactionError(ERR_CRC, "crc");
         finishTransaction(true);
         return;
